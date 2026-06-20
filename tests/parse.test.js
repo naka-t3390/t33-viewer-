@@ -6,6 +6,7 @@ import { parseKmlTrack } from "../js/parse.js";
 import { decimate } from "../js/parse.js";
 import { hvLabel } from "../js/parse.js";
 import { groupSessions } from "../js/parse.js";
+import { buildViewModel } from "../js/parse.js";
 
 test("parseVideoStartMs: 有効JSONはepoch msを返す", () => {
   assert.equal(parseVideoStartMs('{"video_start_ms": 1780205191835}'), 1780205191835);
@@ -127,4 +128,48 @@ test("groupSessions: 表示ラベル", () => {
 });
 test("groupSessions: KMLのみ(CSV無し)は除外", () => {
   assert.ok(!groupSessions(FILES).some((s) => s.stem === "t33_20260618_080000"));
+});
+
+const VM_CSV = [
+  "timestamp_iso,timestamp_ms,vehicle_speed_kmh,engine_rpm,engine_load_pct,coolant_temp_c,throttle_pct,hv_state",
+  "x,1000,50.0,1200.0,30.0,80.0,12.5,2.0",
+  "x,2000,52.0,1300.0,31.0,80.5,13.0,2.0",
+].join("\n");
+const VM_KML = [
+  '<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2"><gx:Track>',
+  "<when>1970-01-01T00:00:01Z</when><gx:coord>139.7 35.6 1</gx:coord>",
+  "<when>1970-01-01T00:00:02Z</when><gx:coord>139.8 35.7 1</gx:coord>",
+  "</gx:Track></kml>",
+].join("");
+
+test("buildViewModel: JSONにstartがあればsynced", () => {
+  const vm = buildViewModel(VM_CSV, VM_KML, '{"video_start_ms": 1000}', true);
+  assert.equal(vm.synced, true);
+  assert.equal(vm.samples[0].t, 0.0);
+});
+test("buildViewModel: JSON無しはCSV先頭時刻にフォールバック+警告", () => {
+  const vm = buildViewModel(VM_CSV, VM_KML, "", true);
+  assert.equal(vm.synced, false);
+  assert.equal(vm.samples[0].t, 0.0);
+  assert.ok(vm.warnings.some((w) => w.includes("video_start_ms")));
+});
+test("buildViewModel: 動画無しで警告", () => {
+  const vm = buildViewModel(VM_CSV, VM_KML, '{"video_start_ms": 1000}', false);
+  assert.ok(vm.warnings.some((w) => w.includes("動画")));
+});
+test("buildViewModel: KML無しでtrack空+警告", () => {
+  const vm = buildViewModel(VM_CSV, "", '{"video_start_ms": 1000}', true);
+  assert.deepEqual(vm.track, []);
+  assert.ok(vm.warnings.some((w) => w.includes("KML") || w.includes("地図")));
+});
+test("buildViewModel: trackは生のlat/lon", () => {
+  const vm = buildViewModel(VM_CSV, VM_KML, '{"video_start_ms": 1000}', true);
+  assert.ok("lat" in vm.track[0] && "lon" in vm.track[0]);
+});
+test("buildViewModel: graphはmaxPointsを尊重", () => {
+  const vm = buildViewModel(VM_CSV, VM_KML, '{"video_start_ms": 1000}', true, 1);
+  assert.ok(vm.graph.length <= 1);
+});
+test("buildViewModel: timestamp無しCSVはthrow", () => {
+  assert.throws(() => buildViewModel("timestamp_ms\n\n", "", "", false));
 });

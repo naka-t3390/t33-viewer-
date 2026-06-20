@@ -137,3 +137,43 @@ export function groupSessions(files) {
     .filter((s) => s.csv !== null)
     .sort((a, b) => (a.stem < b.stem ? 1 : a.stem > b.stem ? -1 : 0));
 }
+
+function firstTimestampMs(csvText) {
+  const lines = splitCsvLines(csvText);
+  if (lines.length < 2) return null;
+  const header = lines[0].split(",").map((h) => h.trim());
+  const tsIdx = header.indexOf("timestamp_ms");
+  if (tsIdx < 0) return null;
+  for (let r = 1; r < lines.length; r++) {
+    const raw = (lines[r].split(",")[tsIdx] ?? "").trim();
+    if (raw === "") continue;
+    const v = Number.parseInt(raw, 10);
+    if (!Number.isNaN(v)) return v;
+  }
+  return null;
+}
+
+export function buildViewModel(csvText, kmlText, jsonText, hasVideo, maxPoints = 3000) {
+  const warnings = [];
+  let startMs = parseVideoStartMs(jsonText || "");
+  const synced = startMs !== null;
+  if (!synced) {
+    startMs = firstTimestampMs(csvText);
+    warnings.push("video_start_ms が無いため CSV 先頭時刻を起点に代替同期しています（精度低下の可能性）。");
+  }
+  if (startMs === null) {
+    throw new Error("CSV に有効な timestamp_ms がありません。");
+  }
+  const samples = parseCsvSeries(csvText, startMs);
+  if (samples.length === 0) {
+    throw new Error("CSV にデータ行がありません。");
+  }
+  const track = parseKmlTrack(kmlText || "", startMs);
+  if (track.length === 0) {
+    warnings.push("KML が無い/空のため地図（走行軌跡）を表示しません。");
+  }
+  if (!hasVideo) {
+    warnings.push("動画ファイル（mp4）が見つからないため動画なしで表示します。");
+  }
+  return { synced, samples, graph: decimate(samples, maxPoints), track, warnings };
+}
