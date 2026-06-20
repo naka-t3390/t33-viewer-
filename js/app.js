@@ -10,6 +10,7 @@ const setError = (msg) => { $("error").textContent = msg || ""; };
 
 let dates = [];     // [{id, name, label}] 走行日（最新が先頭）
 let sessions = [];  // 選択中の走行日のセッション（groupSessions の結果）
+let opSeq = 0;      // 非同期レースガード：最新の日付/時刻操作のみ反映する連番
 
 // GIS スクリプトの読込完了を待ってから初期化
 function whenGisReady(cb) {
@@ -31,6 +32,8 @@ async function loadDates() {
   const dateSel = $("date");
   const sessionSel = $("session");
   if (dates.length === 0) {
+    dateSel.innerHTML = "";
+    sessionSel.innerHTML = "";
     dateSel.classList.add("hidden");
     sessionSel.classList.add("hidden");
     setStatus("");
@@ -52,16 +55,20 @@ async function loadDates() {
 
 // 走行日を選択：その日の時刻フォルダ＋ファイルを取得しセッション一覧を作る
 async function loadSessions(dateIndex) {
+  const seq = ++opSeq;
   setError("");
   const d = dates[dateIndex];
   setStatus(`${d.label} のセッションを取得中…`);
   const sessionSel = $("session");
   try {
     const children = await listChildren(d.id);
+    if (seq !== opSeq) return; // 後続の操作に追い越されたら破棄
     const { timeFolders, directFiles } = partitionDateChildren(children);
     let files = [...directFiles]; // 旧フラット構成の後方互換
     for (const tf of timeFolders) {
-      files = files.concat(await listChildren(tf.id));
+      const more = await listChildren(tf.id);
+      if (seq !== opSeq) return;
+      files = files.concat(more);
     }
     sessions = groupSessions(files);
     if (sessions.length === 0) {
@@ -83,6 +90,7 @@ async function loadSessions(dateIndex) {
     setStatus(`${d.label}：${sessions.length} セッション`);
     await openSession(0);
   } catch (e) {
+    if (seq !== opSeq) return;
     setError(String(e.message || e));
     setStatus("");
   }
@@ -90,24 +98,30 @@ async function loadSessions(dateIndex) {
 
 // 時刻セッションを開く（描画は既存のまま）
 async function openSession(index) {
+  const seq = ++opSeq;
   setError("");
   const s = sessions[index];
   setStatus(`${s.dateLabel} ${s.timeLabel} を読み込み中…`);
   try {
     const csvText = await downloadText(s.csv);
+    if (seq !== opSeq) return;
     const kmlText = s.kml ? await downloadText(s.kml) : "";
+    if (seq !== opSeq) return;
     const jsonText = s.json ? await downloadText(s.json) : "";
+    if (seq !== opSeq) return;
     let videoSrc = null;
     if (s.mp4) {
       videoSrc = await downloadBlobUrl(s.mp4, (loaded, total) => {
         const pct = total ? Math.round((loaded / total) * 100) : null;
         setStatus(`動画ダウンロード中… ${pct !== null ? pct + "%" : Math.round(loaded / 1e6) + "MB"}`);
       });
+      if (seq !== opSeq) { URL.revokeObjectURL(videoSrc); return; } // 破棄時は blob を解放
     }
     const model = buildViewModel(csvText, kmlText, jsonText, Boolean(s.mp4));
     renderViewer(model, videoSrc);
     setStatus(`${s.dateLabel} ${s.timeLabel}`);
   } catch (e) {
+    if (seq !== opSeq) return;
     setError(String(e.message || e));
     setStatus("");
   }
