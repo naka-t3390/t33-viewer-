@@ -5,6 +5,7 @@ import { parseCsvSeries } from "../js/parse.js";
 import { parseKmlTrack } from "../js/parse.js";
 import { decimate } from "../js/parse.js";
 import { hvLabel } from "../js/parse.js";
+import { groupSessions } from "../js/parse.js";
 
 test("parseVideoStartMs: 有効JSONはepoch msを返す", () => {
   assert.equal(parseVideoStartMs('{"video_start_ms": 1780205191835}'), 1780205191835);
@@ -95,3 +96,35 @@ test("hvLabel: 50..119 は 発電中・低", () => assert.equal(hvLabel(80), "�
 test("hvLabel: <50 は 停止", () => assert.equal(hvLabel(2), "停止"));
 test("hvLabel: 境界 120 は 発電中・高", () => assert.equal(hvLabel(120), "発電中・高"));
 test("hvLabel: 境界 50 は 発電中・低", () => assert.equal(hvLabel(50), "発電中・低"));
+
+const FILES = [
+  { id: "a", name: "t33_20260620_101530.csv" },
+  { id: "b", name: "t33_20260620_101530.kml" },
+  { id: "c", name: "t33_20260620_101530.mp4" },
+  { id: "d", name: "t33_20260620_101530_video.json" },
+  { id: "e", name: "t33_20260619_090000.csv" },
+  { id: "f", name: "stray_notes.txt" },
+  { id: "g", name: "t33_20260618_080000.kml" }, // CSV無し → 除外
+];
+
+test("groupSessions: CSVありセッションのみ、新しい順", () => {
+  const s = groupSessions(FILES);
+  assert.equal(s.length, 2);
+  assert.equal(s[0].stem, "t33_20260620_101530");
+  assert.equal(s[1].stem, "t33_20260619_090000");
+});
+test("groupSessions: 種別ごとにfile IDを割当て", () => {
+  const s = groupSessions(FILES)[0];
+  assert.equal(s.csv, "a");
+  assert.equal(s.kml, "b");
+  assert.equal(s.mp4, "c");
+  assert.equal(s.json, "d");
+});
+test("groupSessions: 表示ラベル", () => {
+  const s = groupSessions(FILES)[0];
+  assert.equal(s.dateLabel, "2026-06-20");
+  assert.equal(s.timeLabel, "10:15:30");
+});
+test("groupSessions: KMLのみ(CSV無し)は除外", () => {
+  assert.ok(!groupSessions(FILES).some((s) => s.stem === "t33_20260618_080000"));
+});

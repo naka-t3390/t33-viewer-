@@ -102,3 +102,38 @@ export function hvLabel(hvState) {
   if (hvState >= 50) return "発電中・低";
   return "停止";
 }
+
+const SESSION_RE = /^(?:t33_)?(\d{8})_(\d{6})/;
+
+function classifyKind(name) {
+  if (name.endsWith("_video.json")) return "json";
+  if (name.endsWith(".csv")) return "csv";
+  if (name.endsWith(".kml")) return "kml";
+  if (name.endsWith(".mp4")) return "mp4";
+  return null;
+}
+
+export function groupSessions(files) {
+  const map = new Map();
+  for (const f of files) {
+    const m = SESSION_RE.exec(f.name);
+    if (!m) continue;
+    const kind = classifyKind(f.name);
+    if (!kind) continue;
+    const ymd = m[1];
+    const hms = m[2];
+    const stem = `t33_${ymd}_${hms}`;
+    if (!map.has(stem)) {
+      map.set(stem, {
+        stem,
+        dateLabel: `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}`,
+        timeLabel: `${hms.slice(0, 2)}:${hms.slice(2, 4)}:${hms.slice(4, 6)}`,
+        csv: null, kml: null, mp4: null, json: null,
+      });
+    }
+    map.get(stem)[kind] = f.id;
+  }
+  return [...map.values()]
+    .filter((s) => s.csv !== null)
+    .sort((a, b) => (a.stem < b.stem ? 1 : a.stem > b.stem ? -1 : 0));
+}
