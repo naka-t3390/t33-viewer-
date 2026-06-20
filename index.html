@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>T33 Drive ビューア</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H"
+      crossorigin="anonymous">
+</head>
+<body>
+<header>
+  <h1>T33 Drive ビューア</h1>
+  <button id="login">Google でログイン</button>
+  <select id="session" class="hidden"></select>
+  <span id="status"></span>
+</header>
+<div id="error"></div>
+<div id="warnings" class="warn"></div>
+<div class="top">
+  <video id="video" controls playsinline></video>
+  <div class="panel">
+    <div class="gauge"><div class="k">速度 km/h</div><div class="v" id="g-speed">--</div></div>
+    <div class="gauge"><div class="k">回転 rpm</div><div class="v" id="g-rpm">--</div></div>
+    <div class="gauge"><div class="k">水温 ℃</div><div class="v" id="g-coolant">--</div></div>
+    <div class="gauge"><div class="k">スロットル %</div><div class="v" id="g-throttle">--</div></div>
+    <div class="gauge"><div class="k">HV状態</div><div class="v" id="g-hv">--</div></div>
+    <div class="gauge"><div class="k">時刻 s</div><div class="v" id="g-time">0.0</div></div>
+  </div>
+</div>
+<div class="wrap">
+  <canvas id="graph"></canvas>
+  <div id="map" class="nomap"></div>
+</div>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH"
+        crossorigin="anonymous"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
