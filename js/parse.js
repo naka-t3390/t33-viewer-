@@ -84,3 +84,14 @@ export function parseKmlTrack(kmlText, videoStartMs) {
   }
   return track;
 }
+
+export function decimate(series, maxPoints) {
+  const n = series.length;
+  if (maxPoints <= 0 || n <= maxPoints) return [...series];
+  if (maxPoints === 1) return [series[0]];
+  const step = (n - 1) / (maxPoints - 1);
+  const indices = [...new Set(
+    Array.from({ length: maxPoints }, (_, i) => Math.round(i * step))
+  )].sort((a, b) => a - b);
+  return indices.map((i) => series[i]);
+}

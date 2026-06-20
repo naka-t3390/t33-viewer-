@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { parseVideoStartMs } from "../js/parse.js";
 import { parseCsvSeries } from "../js/parse.js";
 import { parseKmlTrack } from "../js/parse.js";
+import { decimate } from "../js/parse.js";
 
 test("parseVideoStartMs: 有効JSONはepoch msを返す", () => {
   assert.equal(parseVideoStartMs('{"video_start_ms": 1780205191835}'), 1780205191835);
@@ -72,4 +73,17 @@ test("parseKmlTrack: when は秒オフセット", () => {
 });
 test("parseKmlTrack: 空KMLは空配列", () => {
   assert.deepEqual(parseKmlTrack("<kml></kml>", 0), []);
+});
+
+test("decimate: 上限以下はそのまま", () => {
+  assert.deepEqual(decimate([1, 2, 3], 10), [1, 2, 3]);
+});
+test("decimate: maxPoints以下に減る", () => {
+  const out = decimate(Array.from({ length: 100 }, (_, i) => i), 10);
+  assert.ok(out.length <= 10);
+});
+test("decimate: 端点を保持", () => {
+  const out = decimate(Array.from({ length: 100 }, (_, i) => i), 10);
+  assert.equal(out[0], 0);
+  assert.equal(out[out.length - 1], 99);
 });
