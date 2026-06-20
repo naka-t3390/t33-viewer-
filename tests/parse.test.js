@@ -7,6 +7,7 @@ import { decimate } from "../js/parse.js";
 import { hvLabel } from "../js/parse.js";
 import { groupSessions } from "../js/parse.js";
 import { buildViewModel } from "../js/parse.js";
+import { selectDateFolders, partitionDateChildren } from "../js/parse.js";
 
 test("parseVideoStartMs: 有効JSONはepoch msを返す", () => {
   assert.equal(parseVideoStartMs('{"video_start_ms": 1780205191835}'), 1780205191835);
@@ -175,4 +176,44 @@ test("buildViewModel: graphはmaxPointsを尊重", () => {
 });
 test("buildViewModel: timestamp無しCSVはthrow", () => {
   assert.throws(() => buildViewModel("timestamp_ms\n\n", "", "", false));
+});
+
+const FOLDER = "application/vnd.google-apps.folder";
+
+test("selectDateFolders: 日付フォルダのみ抽出し降順・ラベル整形", () => {
+  const children = [
+    { id: "a", name: "20260618", mimeType: FOLDER },
+    { id: "b", name: "20260620", mimeType: FOLDER },
+    { id: "c", name: "old", mimeType: FOLDER },          // 8桁数字でない→除外
+    { id: "d", name: "uploaded", mimeType: FOLDER },     // 除外
+    { id: "e", name: "20260619", mimeType: "image/jpeg" }, // フォルダでない→除外
+  ];
+  const out = selectDateFolders(children);
+  assert.deepEqual(out, [
+    { id: "b", name: "20260620", label: "2026-06-20" },
+    { id: "a", name: "20260618", label: "2026-06-18" },
+  ]);
+});
+
+test("selectDateFolders: 空入力は空配列", () => {
+  assert.deepEqual(selectDateFolders([]), []);
+});
+
+test("partitionDateChildren: フォルダ(時刻)とファイル(直下)を二分", () => {
+  const children = [
+    { id: "t1", name: "122333", mimeType: FOLDER },
+    { id: "f1", name: "t33_20260620_122333.csv", mimeType: "text/csv" },
+    { id: "t2", name: "153000", mimeType: FOLDER },
+  ];
+  const { timeFolders, directFiles } = partitionDateChildren(children);
+  assert.deepEqual(timeFolders.map((x) => x.id), ["t1", "t2"]);
+  assert.deepEqual(directFiles.map((x) => x.id), ["f1"]);
+});
+
+test("partitionDateChildren: 全ファイル/全フォルダ/空", () => {
+  assert.deepEqual(partitionDateChildren([]), { timeFolders: [], directFiles: [] });
+  const allFiles = [{ id: "f", name: "x.csv", mimeType: "text/csv" }];
+  assert.deepEqual(partitionDateChildren(allFiles), { timeFolders: [], directFiles: allFiles });
+  const allFolders = [{ id: "d", name: "120000", mimeType: FOLDER }];
+  assert.deepEqual(partitionDateChildren(allFolders), { timeFolders: allFolders, directFiles: [] });
 });
