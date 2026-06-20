@@ -4,6 +4,7 @@ import { parseVideoStartMs } from "../js/parse.js";
 import { parseCsvSeries } from "../js/parse.js";
 import { parseKmlTrack } from "../js/parse.js";
 import { decimate } from "../js/parse.js";
+import { hvLabel } from "../js/parse.js";
 
 test("parseVideoStartMs: 有効JSONはepoch msを返す", () => {
   assert.equal(parseVideoStartMs('{"video_start_ms": 1780205191835}'), 1780205191835);
@@ -87,3 +88,10 @@ test("decimate: 端点を保持", () => {
   assert.equal(out[0], 0);
   assert.equal(out[out.length - 1], 99);
 });
+
+test("hvLabel: null は --", () => assert.equal(hvLabel(null), "--"));
+test("hvLabel: >=120 は 発電中・高", () => assert.equal(hvLabel(150), "発電中・高"));
+test("hvLabel: 50..119 は 発電中・低", () => assert.equal(hvLabel(80), "発電中・低"));
+test("hvLabel: <50 は 停止", () => assert.equal(hvLabel(2), "停止"));
+test("hvLabel: 境界 120 は 発電中・高", () => assert.equal(hvLabel(120), "発電中・高"));
+test("hvLabel: 境界 50 は 発電中・低", () => assert.equal(hvLabel(50), "発電中・低"));

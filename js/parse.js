@@ -95,3 +95,10 @@ export function decimate(series, maxPoints) {
   )].sort((a, b) => a - b);
   return indices.map((i) => series[i]);
 }
+
+export function hvLabel(hvState) {
+  if (hvState == null) return "--";
+  if (hvState >= 120) return "発電中・高";
+  if (hvState >= 50) return "発電中・低";
+  return "停止";
+}
