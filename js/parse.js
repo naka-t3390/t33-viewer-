@@ -103,7 +103,7 @@ export function hvLabel(hvState) {
   return "停止";
 }
 
-const SESSION_RE = /^(?:t33_)?(\d{8})_(\d{6})/;
+const SESSION_RE = /^t33_(\d{8})_(\d{6})/;
 
 function classifyKind(name) {
   if (name.endsWith("_video.json")) return "json";

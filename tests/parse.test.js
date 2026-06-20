@@ -20,6 +20,9 @@ test("parseVideoStartMs: 不正JSONはnull", () => {
 test("parseVideoStartMs: 非整数値はnull", () => {
   assert.equal(parseVideoStartMs('{"video_start_ms": "x"}'), null);
 });
+test("parseVideoStartMs: 真偽値はnull", () => {
+  assert.equal(parseVideoStartMs('{"video_start_ms": true}'), null);
+});
 
 const CSV = [
   "timestamp_iso,timestamp_ms,vehicle_speed_kmh,engine_rpm,engine_load_pct,coolant_temp_c,throttle_pct,hv_state",
