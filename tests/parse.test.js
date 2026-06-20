@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseVideoStartMs } from "../js/parse.js";
 import { parseCsvSeries } from "../js/parse.js";
+import { parseKmlTrack } from "../js/parse.js";
 
 test("parseVideoStartMs: 有効JSONはepoch msを返す", () => {
   assert.equal(parseVideoStartMs('{"video_start_ms": 1780205191835}'), 1780205191835);
@@ -42,4 +43,33 @@ test("parseCsvSeries: 空セルはnull", () => {
 });
 test("parseCsvSeries: データ行数に一致", () => {
   assert.equal(parseCsvSeries(CSV, 1000).length, 2);
+});
+
+const KML = [
+  '<?xml version="1.0" encoding="UTF-8"?>',
+  '<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">',
+  "<Placemark><gx:Track>",
+  "<when>2026-05-06T04:09:53Z</when>",
+  "<gx:coord>139.700000 35.600000 10</gx:coord>",
+  "<when>2026-05-06T04:09:55Z</when>",
+  "<gx:coord>139.700100 35.600200 11</gx:coord>",
+  "</gx:Track></Placemark></kml>",
+].join("");
+// 2026-05-06T04:09:53Z = epoch ms 1778040593000
+
+test("parseKmlTrack: when と coord をペアにする", () => {
+  assert.equal(parseKmlTrack(KML, 1778040593000).length, 2);
+});
+test("parseKmlTrack: coord順は lon lat alt", () => {
+  const t = parseKmlTrack(KML, 1778040593000);
+  assert.ok(Math.abs(t[0].lat - 35.6) < 1e-6);
+  assert.ok(Math.abs(t[0].lon - 139.7) < 1e-6);
+});
+test("parseKmlTrack: when は秒オフセット", () => {
+  const t = parseKmlTrack(KML, 1778040593000);
+  assert.equal(t[0].t, 0.0);
+  assert.equal(t[1].t, 2.0);
+});
+test("parseKmlTrack: 空KMLは空配列", () => {
+  assert.deepEqual(parseKmlTrack("<kml></kml>", 0), []);
 });

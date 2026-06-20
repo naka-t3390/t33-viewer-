@@ -55,3 +55,32 @@ export function parseCsvSeries(csvText, videoStartMs) {
   }
   return series;
 }
+
+function isoToEpochMs(text) {
+  const t = (text ?? "").trim();
+  if (t === "") return null;
+  const ms = Date.parse(t); // ISO + Z を UTC として解釈
+  return Number.isNaN(ms) ? null : ms;
+}
+
+// DOMParser を使わず（Node 互換のため）正規表現でタグ内容を抽出する。
+export function parseKmlTrack(kmlText, videoStartMs) {
+  const whens = [...kmlText.matchAll(/<when>([^<]*)<\/when>/g)].map((m) => m[1]);
+  const coords = [...kmlText.matchAll(/<gx:coord>([^<]*)<\/gx:coord>/g)].map((m) => m[1]);
+  const n = Math.min(whens.length, coords.length);
+  const track = [];
+  for (let i = 0; i < n; i++) {
+    const epochMs = isoToEpochMs(whens[i]);
+    const parts = (coords[i] ?? "").trim().split(/\s+/);
+    if (epochMs === null || parts.length < 2) continue;
+    const lon = Number(parts[0]);
+    const lat = Number(parts[1]);
+    if (Number.isNaN(lon) || Number.isNaN(lat)) continue;
+    track.push({
+      t: Math.round(((epochMs - videoStartMs) / 1000.0) * 1000) / 1000,
+      lat,
+      lon,
+    });
+  }
+  return track;
+}
