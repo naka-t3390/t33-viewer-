@@ -38,11 +38,11 @@ export async function listChildren(folderId) {
   const out = [];
   let pageToken = null;
   do {
-    let url = `${FILES_ENDPOINT}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent("nextPageToken,files(id,name)")}&pageSize=1000&spaces=drive`;
+    let url = `${FILES_ENDPOINT}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent("nextPageToken,files(id,name,mimeType)")}&pageSize=1000&spaces=drive`;
     if (pageToken) url += `&pageToken=${pageToken}`;
     const res = await authedFetch(url);
     const json = await res.json();
-    for (const f of json.files || []) out.push({ id: f.id, name: f.name });
+    for (const f of json.files || []) out.push({ id: f.id, name: f.name, mimeType: f.mimeType });
     pageToken = json.nextPageToken || null;
   } while (pageToken);
   return out;

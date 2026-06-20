@@ -177,3 +177,28 @@ export function buildViewModel(csvText, kmlText, jsonText, hasVideo, maxPoints =
   }
   return { synced, samples, graph: decimate(samples, maxPoints), track, warnings };
 }
+
+const DRIVE_FOLDER_MIME = "application/vnd.google-apps.folder";
+
+// root 直下の children から日付フォルダ(YYYYMMDD)だけを抽出。最新が先頭。
+export function selectDateFolders(children) {
+  return children
+    .filter((c) => c.mimeType === DRIVE_FOLDER_MIME && /^\d{8}$/.test(c.name))
+    .map((c) => ({
+      id: c.id,
+      name: c.name,
+      label: `${c.name.slice(0, 4)}-${c.name.slice(4, 6)}-${c.name.slice(6, 8)}`,
+    }))
+    .sort((a, b) => (a.name < b.name ? 1 : a.name > b.name ? -1 : 0));
+}
+
+// 日付フォルダ直下の children を「時刻フォルダ」と「直下ファイル(旧フラット)」に二分。
+export function partitionDateChildren(children) {
+  const timeFolders = [];
+  const directFiles = [];
+  for (const c of children) {
+    if (c.mimeType === DRIVE_FOLDER_MIME) timeFolders.push(c);
+    else directFiles.push(c);
+  }
+  return { timeFolders, directFiles };
+}
