@@ -44,6 +44,19 @@ export function renderViewer(model, videoSrc) {
     const lpoly = L.polyline(latlngs, { color: "#2563c9", weight: 4 }).addTo(lmap);
     lmap.fitBounds(lpoly.getBounds(), { padding: [24, 24] });
     L.control.scale({ metric: true, imperial: false }).addTo(lmap);
+    // 右上「全体を表示」: 軌跡 Start〜Goal 全体が収まる縮尺へ自動調整する
+    const FitControl = L.Control.extend({
+      options: { position: "topright" },
+      onAdd() {
+        const btn = L.DomUtil.create("button", "fit-btn");
+        btn.type = "button";
+        btn.textContent = "全体を表示";
+        L.DomEvent.disableClickPropagation(btn);
+        L.DomEvent.on(btn, "click", () => lmap.fitBounds(lpoly.getBounds(), { padding: [24, 24] }));
+        return btn;
+      },
+    });
+    lmap.addControl(new FitControl());
     lmarker = L.circleMarker(latlngs[0], {
       radius: 7, color: "#ffffff", weight: 2, fillColor: "#d64545", fillOpacity: 1,
     }).addTo(lmap);
@@ -138,5 +151,25 @@ export function renderViewer(model, videoSrc) {
 
   window.addEventListener("resize", fit);
   fit();
+
+  // 縦長動画のときはグラフを動画の右列(.side)へ移し、全体の縦尺を縮める。
+  // 横長/正方/動画なしは従来位置(.wrap 内・地図の前)に戻す。
+  const sideEl = document.querySelector(".side");
+  const wrapEl = document.querySelector(".wrap");
+  function applyVideoLayout() {
+    const portrait = Boolean(videoSrc) && video.videoWidth > 0 &&
+      video.videoHeight > video.videoWidth;
+    if (portrait) {
+      document.body.classList.add("portrait-video");
+      if (sideEl && cv.parentElement !== sideEl) sideEl.appendChild(cv);
+    } else {
+      document.body.classList.remove("portrait-video");
+      if (wrapEl && cv.parentElement !== wrapEl) wrapEl.insertBefore(cv, mapEl);
+    }
+    window.dispatchEvent(new Event("resize")); // fit() でグラフ/地図を再描画
+  }
+  video.onloadedmetadata = applyVideoLayout; // 代入で多重登録を防ぐ
+  applyVideoLayout(); // 初期(動画なし/メタ既ロード)
+
   requestAnimationFrame(update);
 }
