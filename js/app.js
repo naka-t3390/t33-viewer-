@@ -1,8 +1,9 @@
 import { CONFIG } from "./config.js";
-import { initAuth, signIn, onTokenExpired } from "./auth.js";
+import { initAuth, signIn, onTokenExpired, getToken } from "./auth.js";
 import { findFolderId, listChildren, downloadText, downloadBlobUrl } from "./drive.js";
 import { selectDateFolders, partitionDateChildren, groupSessions, buildViewModel } from "./parse.js";
 import { renderViewer } from "./viewer.js";
+import { buildMediaUrl } from "./media-range.js";
 
 const $ = (id) => document.getElementById(id);
 const setStatus = (msg) => { $("status").textContent = msg || ""; };
@@ -11,6 +12,30 @@ const setError = (msg) => { $("error").textContent = msg || ""; };
 let dates = [];     // [{id, name, label}] 走行日（最新が先頭）
 let sessions = [];  // 選択中の走行日のセッション（groupSessions の結果）
 let opSeq = 0;      // 非同期レースガード：最新の日付/時刻操作のみ反映する連番
+let swStreaming = false; // SW による動画ストリーミングが使えるか
+
+// SW を登録して制御下に入るまで待つ。失敗時は false（全DLフォールバック）。
+async function setupServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  try {
+    await navigator.serviceWorker.register("./sw.js", { type: "module" });
+    await navigator.serviceWorker.ready;
+    swStreaming = Boolean(navigator.serviceWorker.controller);
+    navigator.serviceWorker.addEventListener("message", (e) => {
+      if (e.data && e.data.type === "drive-401") {
+        setError("認証の有効期限が切れました。再度ログインしてください。");
+      }
+    });
+  } catch {
+    swStreaming = false; // 登録失敗時は従来方式
+  }
+}
+
+// 再生直前に最新トークンを SW へ渡す（メモリ保持のみ）。
+function sendTokenToSW() {
+  const c = navigator.serviceWorker && navigator.serviceWorker.controller;
+  if (c) c.postMessage({ type: "drive-token", token: getToken() });
+}
 
 // GIS スクリプトの読込完了を待ってから初期化
 function whenGisReady(cb) {
@@ -111,11 +136,17 @@ async function openSession(index) {
     if (seq !== opSeq) return;
     let videoSrc = null;
     if (s.mp4) {
-      videoSrc = await downloadBlobUrl(s.mp4, (loaded, total) => {
-        const pct = total ? Math.round((loaded / total) * 100) : null;
-        setStatus(`動画ダウンロード中… ${pct !== null ? pct + "%" : Math.round(loaded / 1e6) + "MB"}`);
-      });
-      if (seq !== opSeq) { URL.revokeObjectURL(videoSrc); return; } // 破棄時は blob を解放
+      if (swStreaming) {
+        sendTokenToSW();                 // 最新トークンを渡してから
+        videoSrc = buildMediaUrl(s.mp4); // 仮想URL（Range ストリーミング）
+        if (seq !== opSeq) return;
+      } else {
+        videoSrc = await downloadBlobUrl(s.mp4, (loaded, total) => {
+          const pct = total ? Math.round((loaded / total) * 100) : null;
+          setStatus(`動画ダウンロード中… ${pct !== null ? pct + "%" : Math.round(loaded / 1e6) + "MB"}`);
+        });
+        if (seq !== opSeq) { URL.revokeObjectURL(videoSrc); return; } // blob を解放
+      }
     }
     const model = buildViewModel(csvText, kmlText, jsonText, Boolean(s.mp4));
     renderViewer(model, videoSrc);
@@ -144,4 +175,5 @@ function wire() {
   $("session").addEventListener("change", (e) => openSession(Number(e.target.value)));
 }
 
+setupServiceWorker();
 whenGisReady(wire);
