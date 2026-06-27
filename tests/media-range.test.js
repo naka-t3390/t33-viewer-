@@ -7,7 +7,8 @@ import {
   buildMediaUrl,
   buildDriveMediaUrl,
   buildDriveHeaders,
-  buildClientHeaders,
+  parseByteRange,
+  buildClientResponseInit,
 } from "../js/media-range.js";
 
 test("MEDIA_PREFIX は /__media__/", () => {
@@ -49,20 +50,56 @@ test("buildDriveHeaders: Range あり/なし", () => {
   assert.deepEqual(buildDriveHeaders(null, "TKN"), { Authorization: "Bearer TKN" });
 });
 
-test("buildClientHeaders: octet-stream を video/mp4 に補正し Range 系を透過", () => {
-  const h = new Headers({
-    "Content-Type": "application/octet-stream",
-    "Content-Length": "100",
-    "Content-Range": "bytes 0-99/1000",
-  });
-  const out = buildClientHeaders(h);
-  assert.equal(out["Content-Type"], "video/mp4");
-  assert.equal(out["Content-Length"], "100");
-  assert.equal(out["Content-Range"], "bytes 0-99/1000");
-  assert.equal(out["Accept-Ranges"], "bytes");
+test("parseByteRange: オープン端（bytes=N-）", () => {
+  assert.deepEqual(parseByteRange("bytes=0-"), { start: 0, end: null });
+  assert.deepEqual(parseByteRange("bytes=1000-"), { start: 1000, end: null });
 });
 
-test("buildClientHeaders: 既存の動画 Content-Type は保持", () => {
-  const h = new Headers({ "Content-Type": "video/mp4" });
-  assert.equal(buildClientHeaders(h)["Content-Type"], "video/mp4");
+test("parseByteRange: クローズ端（bytes=N-M）", () => {
+  assert.deepEqual(parseByteRange("bytes=1000-2000"), { start: 1000, end: 2000 });
+});
+
+test("parseByteRange: 不正/なしは null", () => {
+  assert.equal(parseByteRange(null), null);
+  assert.equal(parseByteRange(""), null);
+  assert.equal(parseByteRange("bytes=abc"), null);
+  assert.equal(parseByteRange("bytes=-100"), null); // suffix range は非対応
+});
+
+// CORS で Drive の Content-Range/Accept-Ranges は読めない前提（null）。
+// 読める Content-Length と Range から自前で Content-Range を合成する。
+test("buildClientResponseInit: 206 bytes=0- は総サイズを算出し Content-Range を合成", () => {
+  const h = new Headers({ "Content-Type": "video/mp4", "Content-Length": "1000" });
+  const { headers, total } = buildClientResponseInit(206, h, "bytes=0-", null);
+  assert.equal(total, 1000);
+  assert.equal(headers["Content-Range"], "bytes 0-999/1000");
+  assert.equal(headers["Accept-Ranges"], "bytes");
+  assert.equal(headers["Content-Length"], "1000");
+  assert.equal(headers["Content-Type"], "video/mp4");
+});
+
+test("buildClientResponseInit: 206 途中オープン端（bytes=400-）は start+CL を総サイズに", () => {
+  const h = new Headers({ "Content-Length": "600" });
+  const { headers, total } = buildClientResponseInit(206, h, "bytes=400-", null);
+  assert.equal(total, 1000);
+  assert.equal(headers["Content-Range"], "bytes 400-999/1000");
+});
+
+test("buildClientResponseInit: 206 クローズ端は既知総サイズ(knownTotal)を使う", () => {
+  const h = new Headers({ "Content-Length": "101" });
+  const { headers } = buildClientResponseInit(206, h, "bytes=100-200", 1000);
+  assert.equal(headers["Content-Range"], "bytes 100-200/1000");
+});
+
+test("buildClientResponseInit: octet-stream は video/mp4 に補正", () => {
+  const h = new Headers({ "Content-Type": "application/octet-stream", "Content-Length": "10" });
+  const { headers } = buildClientResponseInit(206, h, "bytes=0-", null);
+  assert.equal(headers["Content-Type"], "video/mp4");
+});
+
+test("buildClientResponseInit: 200(Range非対応)は Content-Range なし・Accept-Ranges は bytes", () => {
+  const h = new Headers({ "Content-Type": "video/mp4", "Content-Length": "1000" });
+  const { headers } = buildClientResponseInit(200, h, null, null);
+  assert.equal(headers["Content-Range"], undefined);
+  assert.equal(headers["Accept-Ranges"], "bytes");
 });

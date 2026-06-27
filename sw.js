@@ -4,10 +4,11 @@ import {
   parseMediaPath,
   buildDriveMediaUrl,
   buildDriveHeaders,
-  buildClientHeaders,
+  buildClientResponseInit,
 } from "./js/media-range.js";
 
 let driveToken = null; // メモリ保持のみ（永続化しない）
+const sizeCache = new Map(); // fileId -> 総バイト数（Content-Range 合成用）
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
@@ -44,8 +45,12 @@ async function handleMedia(request, url) {
     return new Response("unauthorized", { status: 401 });
   }
 
-  return new Response(driveRes.body, {
-    status: driveRes.status,
-    headers: buildClientHeaders(driveRes.headers),
-  });
+  // CORS で隠れる Content-Range を、要求 Range と読める Content-Length から自前合成する。
+  const rangeHeader = request.headers.get("Range");
+  const { headers, total } = buildClientResponseInit(
+    driveRes.status, driveRes.headers, rangeHeader, sizeCache.get(fileId)
+  );
+  if (total != null) sizeCache.set(fileId, total);
+
+  return new Response(driveRes.body, { status: driveRes.status, headers });
 }
