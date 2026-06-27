@@ -14,7 +14,7 @@ self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim(
 
 self.addEventListener("message", (event) => {
   const data = event.data;
-  if (data && data.type === "drive-token") driveToken = data.token || null;
+  if (data && data.type === "drive-token") driveToken = data.token || null; // 空文字は無効扱い
 });
 
 self.addEventListener("fetch", (event) => {
@@ -28,14 +28,20 @@ async function handleMedia(request, url) {
   if (!fileId) return new Response("bad media path", { status: 400 });
   if (!driveToken) return new Response("no drive token", { status: 401 });
 
-  const driveRes = await fetch(buildDriveMediaUrl(fileId), {
-    headers: buildDriveHeaders(request.headers.get("Range"), driveToken),
-  });
+  let driveRes;
+  try {
+    driveRes = await fetch(buildDriveMediaUrl(fileId), {
+      headers: buildDriveHeaders(request.headers.get("Range"), driveToken),
+    });
+  } catch (err) {
+    return new Response("upstream fetch failed", { status: 502 });
+  }
 
   if (driveRes.status === 401) {
     driveToken = null;
     const all = await self.clients.matchAll();
     for (const c of all) c.postMessage({ type: "drive-401" });
+    return new Response("unauthorized", { status: 401 });
   }
 
   return new Response(driveRes.body, {
