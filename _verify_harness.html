@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>T33 ビューア検証ハーネス</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H"
+      crossorigin="anonymous">
+</head>
+<body>
+<header>
+  <h1>T33 検証ハーネス</h1>
+  <button id="s1">セッション1描画</button>
+  <button id="s2">セッション2描画(再描画)</button>
+  <button id="portrait">縦長動画モード</button>
+  <button id="landscape">横長動画モード</button>
+  <span id="status"></span>
+</header>
+<div id="error"></div>
+<div id="warnings" class="warn"></div>
+<div class="top">
+  <video id="video" controls playsinline></video>
+  <div class="side">
+    <div class="panel">
+      <div class="gauge"><div class="k">速度 km/h</div><div class="v" id="g-speed">--</div></div>
+      <div class="gauge"><div class="k">回転 rpm</div><div class="v" id="g-rpm">--</div></div>
+      <div class="gauge"><div class="k">水温 ℃</div><div class="v" id="g-coolant">--</div></div>
+      <div class="gauge"><div class="k">スロットル %</div><div class="v" id="g-throttle">--</div></div>
+      <div class="gauge"><div class="k">HV状態</div><div class="v" id="g-hv">--</div></div>
+      <div class="gauge"><div class="k">時刻 s</div><div class="v" id="g-time">0.0</div></div>
+    </div>
+  </div>
+</div>
+<div class="wrap">
+  <canvas id="graph"></canvas>
+  <div id="map" class="nomap"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH"
+        crossorigin="anonymous"></script>
+<script type="module">
+import { renderViewer } from "./js/viewer.js";
+
+function mkModel(latBase, lonBase, label) {
+  const samples = [], graph = [], track = [];
+  for (let i = 0; i <= 60; i++) {
+    const t = i;
+    const speed = 30 + 20 * Math.sin(i / 6);
+    const rpm = 1200 + 600 * Math.sin(i / 4);
+    samples.push({ t, speed, rpm, coolant: 80 + i * 0.1, throttle: 20 + 10 * Math.sin(i / 3), hv_state: i % 2 });
+    graph.push({ t, speed, rpm });
+    track.push({ t, lat: latBase + i * 0.0006, lon: lonBase + i * 0.0008 });
+  }
+  return { samples, graph, track, warnings: ["mock " + label] };
+}
+const M1 = mkModel(35.681, 139.767, "S1-Tokyo");
+const M2 = mkModel(34.702, 135.495, "S2-Osaka");
+
+const video = document.getElementById("video");
+let mockW = 0, mockH = 0;
+Object.defineProperty(video, "videoWidth", { get: () => mockW });
+Object.defineProperty(video, "videoHeight", { get: () => mockH });
+const status = document.getElementById("status");
+
+document.getElementById("s1").onclick = () => { mockW = 0; mockH = 0; renderViewer(M1, null); status.textContent = "S1 done (Tokyo)"; };
+document.getElementById("s2").onclick = () => { mockW = 0; mockH = 0; renderViewer(M2, null); status.textContent = "S2 done (Osaka, redraw)"; };
+document.getElementById("portrait").onclick = () => { mockW = 720; mockH = 1280; renderViewer(M1, "data:video/mp4;base64,AAAA"); status.textContent = "portrait done"; };
+document.getElementById("landscape").onclick = () => { mockW = 1280; mockH = 720; renderViewer(M1, "data:video/mp4;base64,AAAA"); status.textContent = "landscape done"; };
+</script>
+</body>
+</html>

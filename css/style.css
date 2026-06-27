@@ -23,6 +23,7 @@ canvas#graph { width:100%; height:210px; display:block; background:#fbf8f1; bord
 .hidden { display:none; }
 /* 縦長動画: 動画(左)の右列にゲージ+グラフを縦積みして全体の縦尺を縮める */
 .portrait-video .top { flex-wrap:nowrap; align-items:stretch; }
-.portrait-video video { width:auto; height:60vh; max-width:45%; min-width:0; }
+.portrait-video video { width:auto; height:30vh; max-width:45%; min-width:0; }
+.portrait-video .side { overflow:hidden; }
 .portrait-video .side .panel { flex:none; }
-.portrait-video .side canvas#graph { flex:1; height:auto; min-height:160px; }
+.portrait-video .side canvas#graph { flex:1; height:auto; min-height:0; }
