@@ -164,24 +164,5 @@ export function renderViewer(model, videoSrc) {
   lifecycle.bindResize(fit); // window への登録は1度だけ。常に最新の fit を呼ぶ
   fit();
 
-  // 縦長動画のときはグラフを動画の右列(.side)へ移し、全体の縦尺を縮める。
-  // 横長/正方/動画なしは従来位置(.wrap 内・地図の前)に戻す。
-  const sideEl = document.querySelector(".side");
-  const wrapEl = document.querySelector(".wrap");
-  function applyVideoLayout() {
-    const portrait = Boolean(videoSrc) && video.videoWidth > 0 &&
-      video.videoHeight > video.videoWidth;
-    if (portrait) {
-      document.body.classList.add("portrait-video");
-      if (sideEl && cv.parentElement !== sideEl) sideEl.appendChild(cv);
-    } else {
-      document.body.classList.remove("portrait-video");
-      if (wrapEl && cv.parentElement !== wrapEl) wrapEl.insertBefore(cv, mapEl);
-    }
-    window.dispatchEvent(new Event("resize")); // fit() でグラフ/地図を再描画
-  }
-  video.onloadedmetadata = applyVideoLayout; // 代入で多重登録を防ぐ
-  applyVideoLayout(); // 初期(動画なし/メタ既ロード)
-
   lifecycle.restartLoop(update); // 前回セッションのループを止めてから開始する
 }

@@ -19,23 +19,19 @@
 </header>
 <div id="error"></div>
 <div id="warnings" class="warn"></div>
-<div class="top">
+<div class="gaugebar">
+  <div class="gauge"><span class="k">速度</span><span class="v" id="g-speed">--</span><span class="u">km/h</span></div>
+  <div class="gauge"><span class="k">回転</span><span class="v" id="g-rpm">--</span><span class="u">rpm</span></div>
+  <div class="gauge"><span class="k">水温</span><span class="v" id="g-coolant">--</span><span class="u">℃</span></div>
+  <div class="gauge"><span class="k">スロットル</span><span class="v" id="g-throttle">--</span><span class="u">%</span></div>
+  <div class="gauge"><span class="k">HV状態</span><span class="v" id="g-hv">--</span></div>
+  <div class="gauge"><span class="k">時刻</span><span class="v" id="g-time">0.0</span><span class="u">s</span></div>
+</div>
+<div class="mid">
   <video id="video" controls playsinline></video>
-  <div class="side">
-    <div class="panel">
-      <div class="gauge"><div class="k">速度 km/h</div><div class="v" id="g-speed">--</div></div>
-      <div class="gauge"><div class="k">回転 rpm</div><div class="v" id="g-rpm">--</div></div>
-      <div class="gauge"><div class="k">水温 ℃</div><div class="v" id="g-coolant">--</div></div>
-      <div class="gauge"><div class="k">スロットル %</div><div class="v" id="g-throttle">--</div></div>
-      <div class="gauge"><div class="k">HV状態</div><div class="v" id="g-hv">--</div></div>
-      <div class="gauge"><div class="k">時刻 s</div><div class="v" id="g-time">0.0</div></div>
-    </div>
-  </div>
-</div>
-<div class="wrap">
   <canvas id="graph"></canvas>
-  <div id="map" class="nomap"></div>
 </div>
+<div id="map" class="nomap"></div>
 
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
