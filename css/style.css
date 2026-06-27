@@ -6,24 +6,27 @@ button:disabled { opacity:.5; cursor:default; }
 #status { color:#877c69; font-size:.85rem; }
 #error { color:#b91c1c; padding:0 16px; font-size:.9rem; }
 .warn { color:#b45309; padding:0 16px; font-size:.85rem; }
-.top { display:flex; flex-wrap:wrap; gap:12px; padding:12px; }
-video { width:25%; max-width:480px; min-width:200px; background:#000; border-radius:8px; }
-.side { flex:1; min-width:200px; display:flex; flex-direction:column; gap:12px; }
-.panel { flex:1; min-width:200px; display:grid; grid-template-columns:1fr 1fr; gap:8px; align-content:start; }
-.gauge { background:#fbf8f1; border:1px solid #e3dac6; border-radius:8px; padding:10px; }
-.gauge .v { font-size:1.6rem; font-weight:700; }
-.gauge .k { color:#877c69; font-size:.8rem; }
-.wrap { padding:12px; }
-#map { background:#fbf8f1; border:1px solid #e3dac6; border-radius:8px; height:460px; overflow:hidden; }
+/* 最上部: ゲージを横一列・縦幅を絞った帯で表示 */
+.gaugebar { display:flex; gap:8px; padding:6px 12px; overflow-x:auto; }
+.gauge { flex:1 1 0; min-width:104px; display:flex; align-items:baseline; gap:6px;
+         background:#fbf8f1; border:1px solid #e3dac6; border-radius:6px; padding:3px 8px; white-space:nowrap; }
+.gauge .k { color:#877c69; font-size:.7rem; }
+.gauge .v { font-size:1.15rem; font-weight:700; margin-left:auto; }
+.gauge .u { color:#a99c86; font-size:.65rem; }
+/* 中段: 左=動画(横長) / 右=グラフ。高さを揃える */
+.mid { display:grid; grid-template-columns:1fr 1fr; gap:12px; padding:8px 12px; height:46vh; min-height:260px; }
+video { width:100%; height:100%; background:#000; border-radius:8px; object-fit:contain; }
+canvas#graph { width:100%; height:100%; display:block; background:#fbf8f1;
+               border:1px solid #e3dac6; border-radius:8px; cursor:crosshair; }
+/* 下段: 全幅マップ */
+#map { margin:8px 12px 12px; background:#fbf8f1; border:1px solid #e3dac6; border-radius:8px;
+       height:40vh; min-height:280px; overflow:hidden; }
 #map .leaflet-control-attribution { font-size:10px; }
+@media (max-width:760px) {
+  .mid { grid-template-columns:1fr; height:auto; }
+  video, canvas#graph { height:240px; }
+}
 .fit-btn { font:inherit; font-size:.85rem; padding:5px 10px; border-radius:8px; border:1px solid #c9a227; background:#fbf8f1; color:#2c2722; cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,.2); }
 .fit-btn:hover { background:#f4efe3; }
-canvas#graph { width:100%; height:210px; display:block; background:#fbf8f1; border:1px solid #e3dac6; border-radius:8px; cursor:crosshair; }
 .nomap { display:none; }
 .hidden { display:none; }
-/* 縦長動画: 動画(左)の右列にゲージ+グラフを縦積みして全体の縦尺を縮める */
-.portrait-video .top { flex-wrap:nowrap; align-items:stretch; }
-.portrait-video video { width:auto; height:30vh; max-width:45%; min-width:0; }
-.portrait-video .side { overflow:hidden; }
-.portrait-video .side .panel { flex:none; }
-.portrait-video .side canvas#graph { flex:1; height:auto; min-height:0; }
