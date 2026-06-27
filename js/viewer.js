@@ -1,4 +1,5 @@
 import { hvLabel } from "./parse.js";
+import { createSessionLifecycle } from "./lifecycle.js";
 
 // ソート済み配列 arr で t に最近傍の index（タイは下側）。
 function nearest(arr, t) {
@@ -12,6 +13,15 @@ function nearest(arr, t) {
   }
   return (lo > 0 && arr[lo] - t > t - arr[lo - 1]) ? lo - 1 : lo;
 }
+
+// セッション再描画ごとの使い捨てリソース(マップ/RAFループ/resizeリスナ)を
+// 一元管理する。前回分を必ず破棄してから作り直すので、再描画しても
+// 「already initialized」やループ/リスナの多重化が起きない。
+const lifecycle = createSessionLifecycle({
+  win: window,
+  raf: (cb) => requestAnimationFrame(cb),
+  caf: (id) => cancelAnimationFrame(id),
+});
 
 export function renderViewer(model, videoSrc) {
   const { samples, graph, track, warnings } = model;
@@ -35,7 +45,8 @@ export function renderViewer(model, videoSrc) {
   if (track.length && window.L) {
     mapEl.classList.remove("nomap");
     mapEl.innerHTML = "";
-    lmap = L.map("map");
+    // 前回マップを破棄してから新規生成(コンテナの _leaflet_id を確実に消す)。
+    lmap = lifecycle.replaceMap(() => L.map("map"));
     L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
@@ -61,6 +72,7 @@ export function renderViewer(model, videoSrc) {
       radius: 7, color: "#ffffff", weight: 2, fillColor: "#d64545", fillOpacity: 1,
     }).addTo(lmap);
   } else {
+    lifecycle.replaceMap(null); // 軌跡なしセッション: 前回マップがあれば破棄する
     mapEl.classList.add("nomap");
   }
 
@@ -139,7 +151,7 @@ export function renderViewer(model, videoSrc) {
       if (j >= 0) lmarker.setLatLng([track[j].lat, track[j].lon]);
     }
     draw(t);
-    requestAnimationFrame(update);
+    // 再スケジュールは lifecycle.restartLoop が一元管理する(多重ループ防止)。
   }
 
   cv.onclick = (e) => {
@@ -149,7 +161,7 @@ export function renderViewer(model, videoSrc) {
     video.currentTime = tMin + cl * (tMax - tMin);
   };
 
-  window.addEventListener("resize", fit);
+  lifecycle.bindResize(fit); // window への登録は1度だけ。常に最新の fit を呼ぶ
   fit();
 
   // 縦長動画のときはグラフを動画の右列(.side)へ移し、全体の縦尺を縮める。
@@ -171,5 +183,5 @@ export function renderViewer(model, videoSrc) {
   video.onloadedmetadata = applyVideoLayout; // 代入で多重登録を防ぐ
   applyVideoLayout(); // 初期(動画なし/メタ既ロード)
 
-  requestAnimationFrame(update);
+  lifecycle.restartLoop(update); // 前回セッションのループを止めてから開始する
 }
