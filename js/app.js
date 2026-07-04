@@ -1,7 +1,7 @@
 import { CONFIG } from "./config.js";
 import { initAuth, signIn, onTokenExpired, getToken } from "./auth.js";
 import { findFolderId, listChildren, downloadText, downloadBlobUrl } from "./drive.js";
-import { selectDateFolders, partitionDateChildren, groupSessions, buildViewModel } from "./parse.js";
+import { selectDateFolders, partitionDateChildren, groupSessions, buildViewModel, parseSegmentedMeta, buildSegmentPlaylist } from "./parse.js";
 import { renderViewer } from "./viewer.js";
 import { buildMediaUrl } from "./media-range.js";
 
@@ -21,6 +21,9 @@ async function setupServiceWorker() {
     await navigator.serviceWorker.register("./sw.js", { type: "module" });
     await navigator.serviceWorker.ready;
     swStreaming = Boolean(navigator.serviceWorker.controller);
+    // 初回訪問では ready 時点で controller が未確立(null)のため false になりがち。
+    // 制御が確立したら controllerchange で true へ更新する（H1: 初回もSWストリーミング）。
+    navigator.serviceWorker.addEventListener("controllerchange", () => { swStreaming = true; });
     navigator.serviceWorker.addEventListener("message", (e) => {
       if (e.data && e.data.type === "drive-401") {
         setError("認証の有効期限が切れました。再度ログインしてください。");
@@ -31,10 +34,19 @@ async function setupServiceWorker() {
   }
 }
 
-// 再生直前に最新トークンを SW へ渡す（メモリ保持のみ）。
+// 再生直前に最新トークンを SW へ渡し、受領 ack を待つ（H2: token 未受領による 401 回避）。
+// controller 不在や ack 不達でも 1.5s で解決して再生を続行する（保守的フォールバック）。
 function sendTokenToSW() {
-  const c = navigator.serviceWorker && navigator.serviceWorker.controller;
-  if (c) c.postMessage({ type: "drive-token", token: getToken() });
+  return new Promise((resolve) => {
+    const c = navigator.serviceWorker && navigator.serviceWorker.controller;
+    if (!c) { resolve(false); return; }
+    const ch = new MessageChannel();
+    const timer = setTimeout(() => resolve(false), 1500);
+    ch.port1.onmessage = (e) => {
+      if (e.data && e.data.type === "drive-token-ack") { clearTimeout(timer); resolve(true); }
+    };
+    c.postMessage({ type: "drive-token", token: getToken() }, [ch.port2]);
+  });
 }
 
 // GIS スクリプトの読込完了を待ってから初期化
@@ -134,22 +146,36 @@ async function openSession(index) {
     if (seq !== opSeq) return;
     const jsonText = s.json ? await downloadText(s.json) : "";
     if (seq !== opSeq) return;
-    let videoSrc = null;
-    if (s.mp4) {
-      if (swStreaming) {
-        sendTokenToSW();                 // 最新トークンを渡してから
-        videoSrc = buildMediaUrl(s.mp4); // 仮想URL（Range ストリーミング）
-        if (seq !== opSeq) return;
-      } else {
-        videoSrc = await downloadBlobUrl(s.mp4, (loaded, total) => {
-          const pct = total ? Math.round((loaded / total) * 100) : null;
-          setStatus(`動画ダウンロード中… ${pct !== null ? pct + "%" : Math.round(loaded / 1e6) + "MB"}`);
-        });
-        if (seq !== opSeq) { URL.revokeObjectURL(videoSrc); return; } // blob を解放
+    // 10分セグメント分割された連番mp4を1本のプレイリストとして扱う（H3）。
+    // _video.json の集約メタがあれば絶対時刻で baseOffset を確定、無ければ
+    // name 昇順＋実測 duration へフォールバック（viewer 側が累積する）。
+    const mp4s = s.mp4s || [];
+    const hasVideo = mp4s.length > 0;
+    let playback = null;
+    if (hasVideo) {
+      const meta = parseSegmentedMeta(jsonText);
+      const list = buildSegmentPlaylist(mp4s, meta); // [{id, name, baseOffsetSec}]
+      if (list.length > 0) {
+        const segments = list.map((x) => ({ baseOffsetSec: x.baseOffsetSec }));
+        if (swStreaming) {
+          await sendTokenToSW();          // token 受領を待ってから src を張る（H2）
+          if (seq !== opSeq) return;
+          // Range ストリーミング: セグメントの仮想URLを都度返す（全DLしない）。
+          playback = { segments, isBlob: false, resolveSrc: async (i) => buildMediaUrl(list[i].id) };
+        } else {
+          // 非SW フォールバック: 該当セグメントのみ blob として順次ダウンロードする。
+          playback = {
+            segments, isBlob: true,
+            resolveSrc: (i) => downloadBlobUrl(list[i].id, (loaded, total) => {
+              const pct = total ? Math.round((loaded / total) * 100) : null;
+              setStatus(`動画ダウンロード中… ${pct !== null ? pct + "%" : Math.round(loaded / 1e6) + "MB"}`);
+            }),
+          };
+        }
       }
     }
-    const model = buildViewModel(csvText, kmlText, jsonText, Boolean(s.mp4));
-    renderViewer(model, videoSrc);
+    const model = buildViewModel(csvText, kmlText, jsonText, hasVideo);
+    renderViewer(model, playback);
     setStatus(`${s.dateLabel} ${s.timeLabel}`);
   } catch (e) {
     if (seq !== opSeq) return;

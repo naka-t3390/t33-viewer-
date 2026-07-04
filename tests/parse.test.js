@@ -122,8 +122,25 @@ test("groupSessions: 種別ごとにfile IDを割当て", () => {
   const s = groupSessions(FILES)[0];
   assert.equal(s.csv, "a");
   assert.equal(s.kml, "b");
-  assert.equal(s.mp4, "c");
+  assert.deepEqual(s.mp4s, [{ id: "c", name: "t33_20260620_101530.mp4" }]);
   assert.equal(s.json, "d");
+});
+test("groupSessions: 連番mp4は同一セッションの mp4s に集約する", () => {
+  const seg = [
+    { id: "s0", name: "t33_20260620_101530_000.mp4" },
+    { id: "s1", name: "t33_20260620_101530_001.mp4" },
+    { id: "sc", name: "t33_20260620_101530.csv" },
+  ];
+  const s = groupSessions(seg)[0];
+  assert.equal(s.mp4s.length, 2);
+  assert.deepEqual(s.mp4s.map((m) => m.name), [
+    "t33_20260620_101530_000.mp4",
+    "t33_20260620_101530_001.mp4",
+  ]);
+});
+test("groupSessions: mp4 が無いセッションは mp4s 空配列", () => {
+  const s = groupSessions(FILES).find((x) => x.stem === "t33_20260619_090000");
+  assert.deepEqual(s.mp4s, []);
 });
 test("groupSessions: 表示ラベル", () => {
   const s = groupSessions(FILES)[0];

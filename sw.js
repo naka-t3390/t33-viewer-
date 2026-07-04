@@ -15,7 +15,13 @@ self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim(
 
 self.addEventListener("message", (event) => {
   const data = event.data;
-  if (data && data.type === "drive-token") driveToken = data.token || null; // 空文字は無効扱い
+  if (data && data.type === "drive-token") {
+    driveToken = data.token || null; // 空文字は無効扱い
+    // MessageChannel の port があれば受領 ack を返す。app 側はこの ack を待ってから
+    // video.src を張るので、SW が token 未受領で 401 を返す race（H2）を防げる。
+    const port = event.ports && event.ports[0];
+    if (port) port.postMessage({ type: "drive-token-ack" });
+  }
 });
 
 self.addEventListener("fetch", (event) => {

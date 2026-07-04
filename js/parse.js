@@ -128,14 +128,84 @@ export function groupSessions(files) {
         stem,
         dateLabel: `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}`,
         timeLabel: `${hms.slice(0, 2)}:${hms.slice(2, 4)}:${hms.slice(4, 6)}`,
-        csv: null, kml: null, mp4: null, json: null,
+        csv: null, kml: null, mp4s: [], json: null,
       });
     }
-    map.get(stem)[kind] = f.id;
+    // mp4 は 10分セグメント分割で複数になりうるため配列に集約する（id と name を保持）。
+    // 他種別（csv/kml/json）は 1 セッション 1 本なので id を直接持つ。
+    if (kind === "mp4") map.get(stem).mp4s.push({ id: f.id, name: f.name });
+    else map.get(stem)[kind] = f.id;
   }
   return [...map.values()]
     .filter((s) => s.csv !== null)
     .sort((a, b) => (a.stem < b.stem ? 1 : a.stem > b.stem ? -1 : 0));
+}
+
+// _video.json（端末 VideoSessionTarget の集約メタ）を解析する。
+// 新形式 {"video_start_ms":X,"segments":[{"file","start_ms"},...]}、
+// 旧単一形式 {"video_start_ms":X}、空・不正のいずれも安全に吸収する。
+// 戻り値: { videoStartMs: number|null, segments: [{file, startMs}] }
+export function parseSegmentedMeta(jsonText) {
+  let data;
+  try {
+    data = JSON.parse(jsonText || "");
+  } catch {
+    return { videoStartMs: null, segments: [] };
+  }
+  if (typeof data !== "object" || data === null) return { videoStartMs: null, segments: [] };
+  const vs = data.video_start_ms;
+  const videoStartMs = typeof vs === "number" && Number.isInteger(vs) ? vs : null;
+  const raw = Array.isArray(data.segments) ? data.segments : [];
+  const segments = [];
+  for (const s of raw) {
+    if (!s || typeof s !== "object") continue;
+    if (typeof s.file !== "string" || s.file === "") continue;
+    if (typeof s.start_ms !== "number" || !Number.isInteger(s.start_ms)) continue;
+    segments.push({ file: s.file, startMs: s.start_ms });
+  }
+  return { videoStartMs, segments };
+}
+
+// Drive 上の連番mp4群(mp4s=[{id,name}])と集約メタを突合し、
+// 再生順のプレイリスト [{id, name, baseOffsetSec}] を作る。
+// - segments メタがあれば file 名で id を解決し、baseOffsetSec=(startMs-videoStartMs)/1000。
+//   Drive に存在しない segment はスキップする。
+// - メタが無い(旧単一/未書込)場合は name 昇順に並べ、先頭 baseOffset=0、
+//   以降は null（viewer 側が loadedmetadata の実測 duration で累積する）。
+export function buildSegmentPlaylist(mp4s, meta) {
+  const files = Array.isArray(mp4s) ? mp4s : [];
+  if (files.length === 0) return [];
+  const segs = meta && Array.isArray(meta.segments) ? meta.segments : [];
+  const videoStartMs = meta ? meta.videoStartMs : null;
+
+  if (segs.length > 0 && videoStartMs != null) {
+    const byName = new Map(files.map((f) => [f.name, f]));
+    const playlist = [];
+    for (const seg of segs) {
+      const f = byName.get(seg.file);
+      if (!f) continue;
+      playlist.push({ id: f.id, name: f.name, baseOffsetSec: (seg.startMs - videoStartMs) / 1000 });
+    }
+    return playlist;
+  }
+
+  const sorted = [...files].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return sorted.map((f, i) => ({ id: f.id, name: f.name, baseOffsetSec: i === 0 ? 0 : null }));
+}
+
+// グローバル時刻(全体タイムラインの秒)から、対象セグメント index と
+// そのセグメント内ローカル時刻を求める（グラフクリックのシーク用）。
+// baseOffsetSec が数値のセグメントのみを基準にする。
+export function segmentAtGlobalTime(playlist, globalTime) {
+  if (!Array.isArray(playlist) || playlist.length === 0) return { index: -1, localTime: 0 };
+  if (globalTime < 0) return { index: 0, localTime: 0 };
+  let index = 0;
+  for (let i = 0; i < playlist.length; i++) {
+    const base = playlist[i].baseOffsetSec;
+    if (base != null && base <= globalTime) index = i;
+  }
+  const base = playlist[index].baseOffsetSec || 0;
+  return { index, localTime: Math.max(0, globalTime - base) };
 }
 
 function firstTimestampMs(csvText) {
