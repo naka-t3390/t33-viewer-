@@ -1,4 +1,4 @@
-import { getToken, notifyExpired } from "./auth.js";
+import { getToken, silentSignIn, notifyExpired } from "./auth.js";
 
 const FILES_ENDPOINT = "https://www.googleapis.com/drive/v3/files";
 
@@ -6,20 +6,36 @@ export function buildListQuery(parentId) {
   return `'${parentId}' in parents and trashed=false`;
 }
 
-async function authedFetch(url, options = {}) {
-  const token = getToken();
-  const res = await fetch(url, {
+// 認証付き fetch。401 のときはサイレント再認証を1回だけ試し、成功したら同リクエストを
+// 新トークンで再試行する(トークン失効の自動回復)。それでもダメなら従来のエラー。
+// deps はテスト用の注入点(lifecycle.js と同じ流儀)。実行時は省略して実物を使う。
+export async function fetchWithAuthRetry(url, options = {}, deps = {}) {
+  const d = {
+    getToken, silentSignIn, notifyExpired,
+    fetchFn: (...a) => fetch(...a),
+    ...deps,
+  };
+  const doFetch = (token) => d.fetchFn(url, {
     ...options,
     headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` },
   });
+  let res = await doFetch(d.getToken());
   if (res.status === 401) {
-    notifyExpired();
-    throw new Error("認証の有効期限が切れました。再ログインしてください。");
+    const fresh = await d.silentSignIn(); // 失敗時は null(例外にしない)
+    if (fresh) res = await doFetch(fresh);
+    if (!fresh || res.status === 401) {
+      d.notifyExpired();
+      throw new Error("認証の有効期限が切れました。再ログインしてください。");
+    }
   }
   if (!res.ok) {
     throw new Error(`Drive API エラー: ${res.status} ${res.statusText}`);
   }
   return res;
+}
+
+async function authedFetch(url, options = {}) {
+  return fetchWithAuthRetry(url, options);
 }
 
 export async function findFolderId(name, parentId = null) {
