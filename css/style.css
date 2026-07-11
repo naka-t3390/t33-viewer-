@@ -18,9 +18,14 @@ button:disabled { opacity:.5; cursor:default; }
 video { width:100%; height:100%; background:#000; border-radius:8px; object-fit:contain; }
 canvas#graph { width:100%; height:100%; display:block; background:#fbf8f1;
                border:1px solid #e3dac6; border-radius:8px; cursor:crosshair; }
-/* 下段: 全幅マップ */
-#map { margin:8px 12px 12px; background:#fbf8f1; border:1px solid #e3dac6; border-radius:8px;
+/* 下段: 全幅マップ。#map=見える枠(クリップ窓)、内側の .map-canvas に Leaflet を載せる */
+#map { position:relative; margin:8px 12px 12px; background:#fbf8f1; border:1px solid #e3dac6; border-radius:8px;
        height:40vh; min-height:280px; overflow:hidden; }
+/* Leaflet コンテナ。通常は枠いっぱい。ヘッドアップ時のみ JS が対角線サイズの正方形へ広げる。
+   id 付きセレクタで leaflet.css の .leaflet-container{position:relative} に打ち勝つ */
+#map .map-canvas { position:absolute; inset:0; }
+/* 右上のボタン群(全体を表示 / 進行方向を上)。枠直下に置くので canvas の回転・拡大に影響されない */
+#map .map-btns { position:absolute; top:8px; right:8px; z-index:1000; display:flex; flex-direction:column; gap:6px; align-items:flex-end; }
 #map .leaflet-control-attribution { font-size:10px; }
 @media (max-width:760px) {
   .mid { grid-template-columns:1fr; height:auto; }

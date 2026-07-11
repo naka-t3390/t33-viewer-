@@ -1,6 +1,22 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bearingDeg, distanceMeters, headingAt } from "../js/geo.js";
+import { bearingDeg, distanceMeters, headingAt, coverSquareSize } from "../js/geo.js";
+
+// coverSquareSize: w×h の枠を、中心を合わせた正方形コンテナ内で任意角度に回転させても
+// 枠が常に収まる最小の一辺(=枠の対角線)。ヘッドアップで四隅欠け/白抜けを防ぐために使う。
+test("coverSquareSize: 正方形は対角線ぶん(√2倍)を切り上げる", () => {
+  assert.equal(coverSquareSize(100, 100), Math.ceil(Math.hypot(100, 100))); // 142
+});
+test("coverSquareSize: 横長矩形は対角線を切り上げる", () => {
+  assert.equal(coverSquareSize(734, 418), Math.ceil(Math.hypot(734, 418))); // 845
+});
+test("coverSquareSize: 返り値は幅・高さのいずれよりも大きい(必ず覆える)", () => {
+  const d = coverSquareSize(734, 418);
+  assert.ok(d >= 734 && d >= 418, `got ${d}`);
+});
+test("coverSquareSize: 常に整数を返す", () => {
+  assert.equal(coverSquareSize(300, 200), Math.trunc(coverSquareSize(300, 200)));
+});
 
 // 方位角: 0=北, 90=東, 180=南, 270=西。緯度経度差から方向を検証する。
 test("bearingDeg: 真北へ移動すると約0度", () => {
