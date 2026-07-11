@@ -1,5 +1,5 @@
 import { CONFIG } from "./config.js";
-import { initAuth, signIn, onTokenExpired, getToken } from "./auth.js";
+import { initAuth, signIn, onTokenExpired, getToken, isGranted, silentSignIn, onTokenRefreshed } from "./auth.js";
 import { findFolderId, listChildren, downloadText, downloadBlobUrl } from "./drive.js";
 import { selectDateFolders, partitionDateChildren, groupSessions, buildViewModel, parseSegmentedMeta, buildSegmentPlaylist } from "./parse.js";
 import { renderViewer } from "./viewer.js";
@@ -186,6 +186,9 @@ async function openSession(index) {
 
 function wire() {
   initAuth();
+  // トークンが更新されたら(自動ログイン・401回復とも) SW にも新トークンを届ける。
+  // 動画ストリーミング中のセグメント切替が古いトークンで 401 になるのを防ぐ。
+  onTokenRefreshed(() => { sendTokenToSW(); });
   onTokenExpired(() => setError("認証の有効期限が切れました。再度ログインしてください。"));
   $("login").addEventListener("click", async () => {
     try {
@@ -201,5 +204,20 @@ function wire() {
   $("session").addEventListener("change", (e) => openSession(Number(e.target.value)));
 }
 
+// 一度許可済みなら、ページを開いただけで無操作の再認証を試す。
+// 成功: ログイン操作なしでそのまま走行日リストを表示(ボタンは再読み込みに変わる)。
+// 失敗: 何も表示を変えない(従来どおりログインボタンから)。
+async function tryAutoSignIn() {
+  if (!isGranted()) return;
+  setStatus("自動ログイン中…");
+  const tok = await silentSignIn();
+  if (!tok) { setStatus(""); return; }
+  $("login").textContent = "再読み込み";
+  await loadDates();
+}
+
 setupServiceWorker();
-whenGisReady(wire);
+whenGisReady(() => {
+  wire();
+  tryAutoSignIn().catch((e) => { setStatus(""); setError(String(e.message || e)); });
+});
