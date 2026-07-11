@@ -28,5 +28,10 @@ canvas#graph { width:100%; height:100%; display:block; background:#fbf8f1;
 }
 .fit-btn { font:inherit; font-size:.85rem; padding:5px 10px; border-radius:8px; border:1px solid #c9a227; background:#fbf8f1; color:#2c2722; cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,.2); }
 .fit-btn:hover { background:#f4efe3; }
+/* ヘッドアップ(進行方向を上)が有効なときのトグルボタン強調 */
+.headup-btn.active { background:#2563c9; border-color:#1c4ea0; color:#fff; }
+.headup-btn.active:hover { background:#1c4ea0; }
+/* 回転する地図ペインの合成を軽く。コントロールは兄弟要素なので回転しない */
+#map .leaflet-map-pane { will-change:transform; }
 .nomap { display:none; }
 .hidden { display:none; }
