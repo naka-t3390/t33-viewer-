@@ -16,13 +16,6 @@ export function bearingDeg(lat1, lon1, lat2, lon2) {
   return (toDeg(Math.atan2(y, x)) + 360) % 360;
 }
 
-// w×h の枠を、中心をそろえた正方形コンテナ内で任意角度に回転させても枠が常に
-// 収まる最小の一辺。地図コンテナをこの正方形に広げて map-pane を回転させれば、
-// 枠(overflow:hidden)でクリップしたとき四隅の白抜け/欠けが起きない。枠の対角線に等しい。
-export function coverSquareSize(w, h) {
-  return Math.ceil(Math.hypot(w, h));
-}
-
 // 2点間の大圏距離(メートル)。停車判定に使う。
 export function distanceMeters(lat1, lon1, lat2, lon2) {
   const phi1 = toRad(lat1);
