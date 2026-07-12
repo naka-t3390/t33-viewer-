@@ -134,10 +134,15 @@ export function renderViewer(model, playback) {
     lmarker = new maplibregl.Marker({ element: carEl }).setLngLat(lnglats[0]).addTo(lmap);
 
     // --- ノースアップ ⇔ ヘッドアップ(進行方向を上) 切替 ---
-    const MIN_MOVE_M = 5;   // これ未満の移動は停車とみなし直前の方位を保持する
-    const HEADUP_ZOOM = 17; // ヘッドアップ時は自車周辺を拡大表示する
+    const MIN_MOVE_M = 5; // これ未満の移動は停車とみなし直前の方位を保持する
     let headUp = false;
-    let lastBearing = 0;    // 最後に確定した進行方位(停車中の保持用)
+    let lastBearing = 0;  // 最後に確定した進行方位(停車中の保持用)
+    // 直前にカメラへ適用した自車位置(track index)と方位。ここが変わらない限り
+    // jumpTo しない。毎フレーム jumpTo すると進行中のズーム操作(ホイール/ピンチ/±)を
+    // 打ち消して「拡大縮小が効かない」状態になるため。zoom は一切指定せず、
+    // 現在の縮尺を常に維持する(ノースアップ⇔ヘッドアップで縮尺を共有)。
+    let lastAppliedJ = null;
+    let lastAppliedBearing = null;
 
     function carLngLatAt(t) {
       const j = nearest(trackTimes, t);
@@ -150,7 +155,10 @@ export function renderViewer(model, playback) {
         const b = headingAt(track, j, MIN_MOVE_M);
         if (b != null) lastBearing = b; // 停車中(null)は直前の向きを維持
       }
-      lmap.jumpTo({ center: carLngLatAt(t), zoom: HEADUP_ZOOM, bearing: lastBearing });
+      if (j === lastAppliedJ && lastBearing === lastAppliedBearing) return;
+      lastAppliedJ = j;
+      lastAppliedBearing = lastBearing;
+      lmap.jumpTo({ center: carLngLatAt(t), bearing: lastBearing });
     }
     // update()/fit() から毎フレーム呼ばれる。ヘッドアップ時のみ追従+回転を適用する。
     applyMapView = (t) => { if (headUp) applyHeadUp(t); };
@@ -172,19 +180,25 @@ export function renderViewer(model, playback) {
     btns.appendChild(headBtn);
     mapEl.appendChild(btns);
 
-    // 全体を表示: ヘッドアップ中なら先に北を上へ戻してから軌跡全体にフィットする。
+    // 北を上へ戻す: 回転のみ解除し、縮尺と中心は維持する(縮尺はモード間で共有)。
     function toNorthUp() {
       headUp = false;
       headBtn.classList.remove("active");
       headBtn.textContent = HeadLabel;
-      lmap.fitBounds(bounds, { padding: 24, bearing: 0 });
+      lmap.jumpTo({ bearing: 0 });
     }
-    fitBtn.addEventListener("click", toNorthUp);
+    // 全体を表示: こちらだけが縮尺を変える(北を上に戻して軌跡全体へフィット)。
+    fitBtn.addEventListener("click", () => {
+      toNorthUp();
+      lmap.fitBounds(bounds, { padding: 24 });
+    });
     headBtn.addEventListener("click", () => {
       if (headUp) { toNorthUp(); return; }
       headUp = true;
       headBtn.classList.add("active");
       headBtn.textContent = NorthLabel; // 次に戻せる状態を表示
+      lastAppliedJ = null; // 前回セッションの適用済み状態を破棄して必ず初回適用する
+      lastAppliedBearing = null;
       applyHeadUp(globalTime());
     });
   } else {
