@@ -3,18 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>T33 Drive ビューア</title>
+<title>T33 本番レイアウト検証</title>
 <link rel="stylesheet" href="css/style.css">
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css"
       integrity="sha384-uTttxo/aOKbdE5RlD/SPzSDoDmNvGlUYPjONi2MN/b7c9HPSvW07OIuyP7uL6jxK"
       crossorigin="anonymous">
 </head>
 <body>
+<!-- 本番 index.html と同一の body 構造(.gaugebar / .mid / 全幅 #map)でヘッドアップを再現する -->
 <header>
-  <h1>T33 Drive ビューア</h1>
-  <button id="login">Google でログイン</button>
-  <select id="date" class="hidden"></select>
-  <select id="session" class="hidden"></select>
+  <h1>T33 本番レイアウト検証</h1>
+  <button id="s1">セッション1描画(広域)</button>
   <span id="status"></span>
 </header>
 <div id="error"></div>
@@ -33,10 +32,35 @@
 </div>
 <div id="map" class="nomap"></div>
 
-<script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"
         integrity="sha384-5+cfbwT0iiub6VsQAdn6yz16nr6sDiQoHx6tm4O8OVYXHYOxcffFmCJBL0dgdvGp"
         crossorigin="anonymous"></script>
-<script type="module" src="js/app.js"></script>
+<script type="module">
+import { renderViewer } from "./js/viewer.js";
+
+// 実データに近い広域の折れ線(習志野→千葉方面を模した緩いカーブ)。約240点。
+function mkModel() {
+  const samples = [], graph = [], track = [];
+  const lat0 = 35.681, lon0 = 140.02;
+  for (let i = 0; i <= 240; i++) {
+    const t = i;
+    const speed = 30 + 20 * Math.sin(i / 15);
+    const rpm = 1200 + 600 * Math.sin(i / 8);
+    samples.push({ t, speed, rpm, coolant: 80, throttle: 20, hv_state: i % 2 });
+    graph.push({ t, speed, rpm });
+    // 緩く蛇行しながら南西へ(方位が変化する広域トラック)
+    const lat = lat0 - i * 0.0004 + 0.004 * Math.sin(i / 20);
+    const lon = lon0 - i * 0.0006 + 0.004 * Math.cos(i / 20);
+    track.push({ t, lat, lon });
+  }
+  return { samples, graph, track, warnings: [] };
+}
+const M = mkModel();
+const video = document.getElementById("video");
+Object.defineProperty(video, "videoWidth", { get: () => 0 });
+Object.defineProperty(video, "videoHeight", { get: () => 0 });
+const status = document.getElementById("status");
+document.getElementById("s1").onclick = () => { renderViewer(M, null); status.textContent = "描画完了(広域トラック)"; };
+</script>
 </body>
 </html>

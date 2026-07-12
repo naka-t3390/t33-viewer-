@@ -1,6 +1,6 @@
 import { hvLabel, segmentAtGlobalTime } from "./parse.js";
 import { createSessionLifecycle } from "./lifecycle.js";
-import { headingAt, coverSquareSize } from "./geo.js";
+import { headingAt } from "./geo.js";
 
 // 非SW フォールバック時の blob URL。次セグメント読込・セッション切替の前に解放する。
 let activeObjectUrl = null;
@@ -90,100 +90,72 @@ export function renderViewer(model, playback) {
     video.style.display = "none";
   }
 
-  // 地図: Leaflet + OpenStreetMap（実緯度経度）
+  // 地図: MapLibre GL + OpenFreeMap ベクタータイル（実緯度経度）
   const trackTimes = track.map((p) => p.t);
   let lmap = null, lmarker = null;
   // ヘッドアップ(進行方向を上)表示の状態。update()/fit() から参照するため外側で保持する。
   // applyMapView(t) は地図生成時に実体を差し込む(軌跡なしセッションでは no-op のまま)。
   let applyMapView = () => {};
-  // 枠リサイズ時にヘッドアップ用 canvas の対角線サイズを敷き直すフック(既定 no-op)。
-  let headUpOnResize = () => {};
   const mapEl = document.getElementById("map");
-  if (track.length && window.L) {
+  if (track.length && window.maplibregl) {
     mapEl.classList.remove("nomap");
     mapEl.innerHTML = "";
-    // 二重構造にする: #map=見える枠(overflow:hidden)、内側 .map-canvas に Leaflet を載せる。
-    // ヘッドアップ時は canvas を枠の対角線サイズの正方形へ広げて中央寄せするので、
-    // 何度回転しても枠内は常にタイルで埋まる。拡大しない(scale なし)のでタイルは鮮明なまま。
-    const canvasEl = document.createElement("div");
-    canvasEl.className = "map-canvas";
-    mapEl.appendChild(canvasEl);
-    // 前回マップを破棄してから新規生成(コンテナの _leaflet_id を確実に消す)。
-    lmap = lifecycle.replaceMap(() => L.map(canvasEl));
-    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-    }).addTo(lmap);
-    const latlngs = track.map((p) => [p.lat, p.lon]);
-    const lpoly = L.polyline(latlngs, { color: "#2563c9", weight: 4 }).addTo(lmap);
-    lmap.fitBounds(lpoly.getBounds(), { padding: [24, 24] });
-    L.control.scale({ metric: true, imperial: false }).addTo(lmap);
-    lmarker = L.circleMarker(latlngs[0], {
-      radius: 7, color: "#ffffff", weight: 2, fillColor: "#d64545", fillOpacity: 1,
-    }).addTo(lmap);
+    // MapLibre は [lon, lat] 順(Leaflet と逆)なので注意。
+    const lnglats = track.map((p) => [p.lon, p.lat]);
+    const bounds = lnglats.reduce(
+      (b, c) => b.extend(c),
+      new maplibregl.LngLatBounds(lnglats[0], lnglats[0])
+    );
+    // 前回マップを破棄してから新規生成。ベクタータイルなので回転しても文字は常に正立。
+    lmap = lifecycle.replaceMap(() => new maplibregl.Map({
+      container: mapEl,
+      style: "https://tiles.openfreemap.org/styles/liberty",
+      bounds,
+      fitBoundsOptions: { padding: 24 },
+      attributionControl: { compact: true },
+    }));
+    lmap.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
+    lmap.addControl(new maplibregl.ScaleControl({ unit: "metric" }));
+    // 軌跡はスタイル読込完了後にレイヤ追加する(load 前の addSource はエラー)。
+    lmap.on("load", () => {
+      lmap.addSource("track", {
+        type: "geojson",
+        data: { type: "Feature", properties: {},
+                geometry: { type: "LineString", coordinates: lnglats } },
+      });
+      lmap.addLayer({
+        id: "track-line", type: "line", source: "track",
+        paint: { "line-color": "#2563c9", "line-width": 4 },
+      });
+    });
+    // 自車マーカー(DOM要素。見た目は CSS .car-marker)
+    const carEl = document.createElement("div");
+    carEl.className = "car-marker";
+    lmarker = new maplibregl.Marker({ element: carEl }).setLngLat(lnglats[0]).addTo(lmap);
 
     // --- ノースアップ ⇔ ヘッドアップ(進行方向を上) 切替 ---
-    // Leaflet はタイル・軌跡・マーカーを .leaflet-map-pane 配下に描く。canvas を対角線
-    // サイズに広げてから map-pane を回転させれば、枠内はどの向きでもタイルで覆われる。
-    const mapPane = canvasEl.querySelector(".leaflet-map-pane");
     const MIN_MOVE_M = 5;   // これ未満の移動は停車とみなし直前の方位を保持する
     const HEADUP_ZOOM = 17; // ヘッドアップ時は自車周辺を拡大表示する
     let headUp = false;
     let lastBearing = 0;    // 最後に確定した進行方位(停車中の保持用)
 
-    // ヘッドアップ時: canvas を枠の対角線サイズの正方形にして中央寄せする。枠(#map)が
-    // どんな縦横比でも、この正方形を -方位 回転させれば枠内は必ずタイルで覆われる。
-    // 拡大は一切しないためタイルは常に等倍で鮮明(旧方式の scale による滲みを解消)。
-    function layoutHeadUp() {
-      const side = coverSquareSize(mapEl.clientWidth, mapEl.clientHeight);
-      canvasEl.style.inset = "auto";
-      canvasEl.style.left = "50%";
-      canvasEl.style.top = "50%";
-      canvasEl.style.width = side + "px";
-      canvasEl.style.height = side + "px";
-      canvasEl.style.marginLeft = -side / 2 + "px";
-      canvasEl.style.marginTop = -side / 2 + "px";
-      lmap.invalidateSize(false); // 対角線サイズでタイルを敷き直す(全体再フィットはしない)
-    }
-    // 通常表示へ戻す: インライン指定を消して CSS(#map .map-canvas{inset:0})に委ねる。
-    function layoutNorthUp() {
-      canvasEl.style.inset = "";
-      canvasEl.style.left = "";
-      canvasEl.style.top = "";
-      canvasEl.style.width = "";
-      canvasEl.style.height = "";
-      canvasEl.style.marginLeft = "";
-      canvasEl.style.marginTop = "";
-      lmap.invalidateSize(false);
-    }
-    function carLatLngAt(t) {
+    function carLngLatAt(t) {
       const j = nearest(trackTimes, t);
-      return j >= 0 ? [track[j].lat, track[j].lon] : latlngs[0];
+      return j >= 0 ? [track[j].lon, track[j].lat] : lnglats[0];
     }
-    // 自車を canvas 中心に置き、map-pane を -方位 回転させて進行方向を画面上向きにする。
-    // canvas が対角線サイズなので拡大は不要(rotate のみ)。
+    // 自車中心・進行方向を上。bearing は MapLibre ネイティブ機能(文字は正立のまま)。
     function applyHeadUp(t) {
       const j = nearest(trackTimes, t);
       if (j >= 0) {
         const b = headingAt(track, j, MIN_MOVE_M);
         if (b != null) lastBearing = b; // 停車中(null)は直前の向きを維持
       }
-      // setView は map-pane の translate を 0 に戻すので、この後に回転を上書きできる。
-      lmap.setView(carLatLngAt(t), HEADUP_ZOOM, { animate: false });
-      // map-pane 自体はサイズ 0 で原点が canvas 左上にあるため、% 指定だと回転軸が
-      // 左上になってしまう。自車は setView で canvas 中心に来るので、回転軸も canvas
-      // 中心のピクセル座標(一辺の半分)で明示し、自車を軸に回す。
-      const c = canvasEl.clientWidth / 2;
-      mapPane.style.transformOrigin = `${c}px ${c}px`;
-      mapPane.style.transform = `rotate(${(-lastBearing).toFixed(2)}deg)`;
+      lmap.jumpTo({ center: carLngLatAt(t), zoom: HEADUP_ZOOM, bearing: lastBearing });
     }
-    // update()/fit() から毎フレーム呼ばれる。ヘッドアップ時のみ回転を適用する。
+    // update()/fit() から毎フレーム呼ばれる。ヘッドアップ時のみ追従+回転を適用する。
     applyMapView = (t) => { if (headUp) applyHeadUp(t); };
-    // 枠リサイズ時: ヘッドアップ中なら対角線サイズを取り直して回転を当て直す。
-    headUpOnResize = () => { if (headUp) { layoutHeadUp(); applyHeadUp(globalTime()); } };
 
-    // ボタン群は Leaflet コントロールではなく枠(#map)直下の素の DOM にする。canvas を
-    // 対角線サイズに広げても回転させても、ボタンは枠の右上に正立のまま残る。
+    // ボタン群(全体を表示 / 進行方向を上)。地図の子ではなく #map 直下の素の DOM。
     const NorthLabel = "⬆ 北を上";
     const HeadLabel = "⬆ 進行方向を上";
     const btns = document.createElement("div");
@@ -201,31 +173,19 @@ export function renderViewer(model, playback) {
     mapEl.appendChild(btns);
 
     // 全体を表示: ヘッドアップ中なら先に北を上へ戻してから軌跡全体にフィットする。
-    fitBtn.addEventListener("click", () => {
-      if (headUp) {
-        headUp = false;
-        headBtn.classList.remove("active");
-        headBtn.textContent = HeadLabel;
-        mapPane.style.transform = "";
-        mapPane.style.transformOrigin = "";
-        layoutNorthUp();
-      }
-      lmap.fitBounds(lpoly.getBounds(), { padding: [24, 24] });
-    });
+    function toNorthUp() {
+      headUp = false;
+      headBtn.classList.remove("active");
+      headBtn.textContent = HeadLabel;
+      lmap.fitBounds(bounds, { padding: 24, bearing: 0 });
+    }
+    fitBtn.addEventListener("click", toNorthUp);
     headBtn.addEventListener("click", () => {
-      headUp = !headUp;
-      headBtn.classList.toggle("active", headUp);
-      headBtn.textContent = headUp ? NorthLabel : HeadLabel; // 次に戻せる状態を表示
-      if (headUp) {
-        layoutHeadUp();
-        applyHeadUp(globalTime());
-      } else {
-        // ノースアップへ復帰: 回転を解除し、枠いっぱいに戻して全体表示する。
-        mapPane.style.transform = "";
-        mapPane.style.transformOrigin = "";
-        layoutNorthUp();
-        lmap.fitBounds(lpoly.getBounds(), { padding: [24, 24] });
-      }
+      if (headUp) { toNorthUp(); return; }
+      headUp = true;
+      headBtn.classList.add("active");
+      headBtn.textContent = NorthLabel; // 次に戻せる状態を表示
+      applyHeadUp(globalTime());
     });
   } else {
     lifecycle.replaceMap(null); // 軌跡なしセッション: 前回マップがあれば破棄する
@@ -287,7 +247,7 @@ export function renderViewer(model, playback) {
     const x = xAt(t, P);
     ctx.strokeStyle = "#d64545"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, P.y); ctx.lineTo(x, P.y + P.h); ctx.stroke();
   }
-  function fit() { cv.width = cv.clientWidth; cv.height = cv.clientHeight; if (lmap) lmap.invalidateSize(); headUpOnResize(); draw(globalTime()); }
+  function fit() { cv.width = cv.clientWidth; cv.height = cv.clientHeight; if (lmap) lmap.resize(); draw(globalTime()); }
 
   const fmt = (v) => (v == null ? "--" : Math.round(v * 10) / 10);
   function update() {
@@ -304,7 +264,7 @@ export function renderViewer(model, playback) {
     }
     if (lmarker) {
       const j = nearest(trackTimes, t);
-      if (j >= 0) lmarker.setLatLng([track[j].lat, track[j].lon]);
+      if (j >= 0) lmarker.setLngLat([track[j].lon, track[j].lat]);
     }
     applyMapView(t); // ヘッドアップ時は自車追従+回転を適用(ノースアップ時は no-op)
     draw(t);
