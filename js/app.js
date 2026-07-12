@@ -29,6 +29,9 @@ async function setupServiceWorker() {
       if (e.data && e.data.type === "drive-401") {
         setError("認証の有効期限が切れました。再度ログインしてください。");
       }
+      if (e.data && e.data.type === "sw-media-no-token") {
+        setError("動画用トークンがSWに未達です。ページを再読み込みしてください。");
+      }
     });
   } catch {
     swStreaming = false; // 登録失敗時は従来方式

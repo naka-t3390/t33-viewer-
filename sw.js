@@ -33,7 +33,13 @@ self.addEventListener("fetch", (event) => {
 async function handleMedia(request, url) {
   const fileId = parseMediaPath(url.pathname);
   if (!fileId) return new Response("bad media path", { status: 400 });
-  if (!driveToken) return new Response("no drive token", { status: 401 });
+  if (!driveToken) {
+    // トークン未受領のまま動画 fetch が来た(=結線の race)ことを画面へ知らせる。
+    // これが無いと video 要素の中で無音の再生失敗になり原因が見えない。
+    const all = await self.clients.matchAll();
+    for (const c of all) c.postMessage({ type: "sw-media-no-token" });
+    return new Response("no drive token", { status: 401 });
+  }
 
   let driveRes;
   try {

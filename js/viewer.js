@@ -79,6 +79,21 @@ export function renderViewer(model, playback) {
     // 次セグメントがあれば先頭から自動再生し、10分境界をまたいで連続再生する（H3）。
     if (currentSeg + 1 < segments.length) loadSegment(currentSeg + 1, 0, true);
   };
+  // 再生失敗の可視化。SW/認証系の失敗は video 要素の中では無音になりがちなので、
+  // MediaError と、同じ src を fetch した実 HTTP ステータスを #error に出して切り分ける。
+  video.onerror = async () => {
+    const me = video.error;
+    let http = "";
+    try {
+      const r = await fetch(video.currentSrc, { headers: { Range: "bytes=0-1" } });
+      http = ` / HTTP ${r.status}`;
+    } catch {
+      http = " / HTTP 取得失敗";
+    }
+    document.getElementById("error").textContent =
+      `動画を再生できません: MediaError code=${me ? me.code : "?"}` +
+      `${me && me.message ? ` (${me.message})` : ""}${http}`;
+  };
 
   if (segments.length > 0) {
     video.style.display = "";
@@ -86,6 +101,7 @@ export function renderViewer(model, playback) {
   } else {
     video.onloadedmetadata = null;
     video.onended = null;
+    video.onerror = null;
     video.removeAttribute("src");
     video.style.display = "none";
   }
