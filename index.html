@@ -12,11 +12,15 @@
 <body>
 <header>
   <h1>T33 Drive ビューア</h1>
+  <button id="panel-toggle" type="button" title="記録一覧を開閉">☰ 記録</button>
   <button id="login">Google でログイン</button>
-  <select id="date" class="hidden"></select>
-  <select id="session" class="hidden"></select>
   <span id="status"></span>
 </header>
+<div class="layout">
+<aside id="panel" class="closed">
+  <div id="panel-list"></div>
+</aside>
+<div class="main">
 <div id="error"></div>
 <div id="warnings" class="warn"></div>
 <div class="gaugebar">
@@ -32,6 +36,8 @@
   <canvas id="graph"></canvas>
 </div>
 <div id="map" class="nomap"></div>
+</div>
+</div>
 
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"
