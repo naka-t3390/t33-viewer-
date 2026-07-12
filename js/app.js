@@ -4,14 +4,15 @@ import { findFolderId, listChildren, downloadText, downloadBlobUrl } from "./dri
 import { selectDateFolders, partitionDateChildren, groupSessions, buildViewModel, parseSegmentedMeta, buildSegmentPlaylist } from "./parse.js";
 import { renderViewer } from "./viewer.js";
 import { buildMediaUrl } from "./media-range.js";
+import { createSessionPanel } from "./panel.js";
 
 const $ = (id) => document.getElementById(id);
 const setStatus = (msg) => { $("status").textContent = msg || ""; };
 const setError = (msg) => { $("error").textContent = msg || ""; };
 
-let dates = [];     // [{id, name, label}] 走行日（最新が先頭）
-let sessions = [];  // 選択中の走行日のセッション（groupSessions の結果）
-let opSeq = 0;      // 非同期レースガード：最新の日付/時刻操作のみ反映する連番
+let dates = [];   // [{id, name, label}] 走行日（最新が先頭）
+let panel = null; // createSessionPanel の戻り値
+let opSeq = 0;    // 非同期レースガード：最新の操作のみ反映する連番
 let swStreaming = false; // SW による動画ストリーミングが使えるか
 
 // SW を登録して制御下に入るまで待つ。失敗時は false（全DLフォールバック）。
@@ -66,78 +67,32 @@ async function loadDates() {
     return;
   }
   dates = selectDateFolders(await listChildren(rootId));
-  const dateSel = $("date");
-  const sessionSel = $("session");
   if (dates.length === 0) {
-    dateSel.innerHTML = "";
-    sessionSel.innerHTML = "";
-    dateSel.classList.add("hidden");
-    sessionSel.classList.add("hidden");
     setStatus("");
     setError("走行セッションが見つかりません。");
     return;
   }
-  dateSel.innerHTML = "";
-  dates.forEach((d, i) => {
-    const opt = document.createElement("option");
-    opt.value = String(i);
-    opt.textContent = d.label;
-    dateSel.appendChild(opt);
-  });
-  dateSel.classList.remove("hidden");
-  dateSel.value = "0"; // 最新の走行日
+  panel.setDates(dates);
+  document.getElementById("panel").classList.remove("closed");
   setStatus(`走行日 ${dates.length} 日`);
-  await loadSessions(0);
+  await panel.expandDate(dates[0], { autoSelectFirst: true }); // 最新日を自動展開・先頭を自動選択
 }
 
-// 走行日を選択：その日の時刻フォルダ＋ファイルを取得しセッション一覧を作る
-async function loadSessions(dateIndex) {
-  const seq = ++opSeq;
-  setError("");
-  const d = dates[dateIndex];
-  setStatus(`${d.label} のセッションを取得中…`);
-  const sessionSel = $("session");
-  try {
-    const children = await listChildren(d.id);
-    if (seq !== opSeq) return; // 後続の操作に追い越されたら破棄
-    const { timeFolders, directFiles } = partitionDateChildren(children);
-    let files = [...directFiles]; // 旧フラット構成の後方互換
-    for (const tf of timeFolders) {
-      const more = await listChildren(tf.id);
-      if (seq !== opSeq) return;
-      files = files.concat(more);
-    }
-    sessions = groupSessions(files);
-    if (sessions.length === 0) {
-      sessionSel.classList.add("hidden");
-      sessionSel.innerHTML = "";
-      setStatus("");
-      setError("その日のセッションが見つかりません。");
-      return;
-    }
-    sessionSel.innerHTML = "";
-    sessions.forEach((s, i) => {
-      const opt = document.createElement("option");
-      opt.value = String(i);
-      opt.textContent = s.timeLabel;
-      sessionSel.appendChild(opt);
-    });
-    sessionSel.classList.remove("hidden");
-    sessionSel.value = "0"; // その日の最新
-    setStatus(`${d.label}：${sessions.length} セッション`);
-    await openSession(0);
-  } catch (e) {
-    if (seq !== opSeq) return;
-    setError(String(e.message || e));
-    setStatus("");
+// 走行日の全ファイルを取得してセッションにまとめる(パネルの遅延読み込みから呼ばれる)。
+async function fetchSessionsForDate(d) {
+  const children = await listChildren(d.id);
+  const { timeFolders, directFiles } = partitionDateChildren(children);
+  let files = [...directFiles]; // 旧フラット構成の後方互換
+  for (const tf of timeFolders) {
+    files = files.concat(await listChildren(tf.id));
   }
+  return groupSessions(files);
 }
 
-// 時刻セッションを開く（描画は既存のまま）
-async function openSession(index) {
+// 時刻セッションを開く（描画は既存のまま。パネルのカード選択から呼ばれる）
+async function openSession(s) {
   const seq = ++opSeq;
   setError("");
-  const s = sessions[index];
   setStatus(`${s.dateLabel} ${s.timeLabel} を読み込み中…`);
   try {
     const csvText = await downloadText(s.csv);
@@ -200,8 +155,14 @@ function wire() {
       setError(String(e.message || e));
     }
   });
-  $("date").addEventListener("change", (e) => loadSessions(Number(e.target.value)));
-  $("session").addEventListener("change", (e) => openSession(Number(e.target.value)));
+  panel = createSessionPanel({
+    listEl: document.getElementById("panel-list"),
+    loadSessions: (d) => fetchSessionsForDate(d).catch((e) => { setError(String(e.message || e)); return []; }),
+    onSelect: (s) => { openSession(s); },
+  });
+  document.getElementById("panel-toggle").addEventListener("click", () => {
+    document.getElementById("panel").classList.toggle("closed");
+  });
 }
 
 // 一度許可済みなら、ページを開いただけで無操作の再認証を試す。

@@ -272,3 +272,14 @@ export function partitionDateChildren(children) {
   }
   return { timeFolders, directFiles };
 }
+
+// サイドパネルのセッションカード表示用メタ。動画は10分セグメント分割なので
+// おおよその記録時間 = セグメント数 × 10分（最終セグメントは短い可能性あり）。
+export function sessionCardMeta(session) {
+  const n = Array.isArray(session.mp4s) ? session.mp4s.length : 0;
+  return {
+    timeLabel: session.timeLabel,
+    hasVideo: n > 0,
+    approxMin: n > 0 ? n * 10 : null,
+  };
+}

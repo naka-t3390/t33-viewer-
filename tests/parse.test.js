@@ -8,6 +8,23 @@ import { hvLabel } from "../js/parse.js";
 import { groupSessions } from "../js/parse.js";
 import { buildViewModel } from "../js/parse.js";
 import { selectDateFolders, partitionDateChildren } from "../js/parse.js";
+import { sessionCardMeta } from "../js/parse.js";
+
+// sessionCardMeta: サイドパネルのカード表示用メタ(時刻・動画有無・推定分数)
+test("sessionCardMeta: 動画なしは hasVideo=false, approxMin=null", () => {
+  const meta = sessionCardMeta({ timeLabel: "09:15:00", mp4s: [] });
+  assert.deepEqual(meta, { timeLabel: "09:15:00", hasVideo: false, approxMin: null });
+});
+
+test("sessionCardMeta: セグメント3本で約30分", () => {
+  const meta = sessionCardMeta({ timeLabel: "10:00:00", mp4s: [{}, {}, {}] });
+  assert.deepEqual(meta, { timeLabel: "10:00:00", hasVideo: true, approxMin: 30 });
+});
+
+test("sessionCardMeta: mp4s が配列でなくても安全", () => {
+  const meta = sessionCardMeta({ timeLabel: "11:00:00", mp4s: null });
+  assert.deepEqual(meta, { timeLabel: "11:00:00", hasVideo: false, approxMin: null });
+});
 
 test("parseVideoStartMs: 有効JSONはepoch msを返す", () => {
   assert.equal(parseVideoStartMs('{"video_start_ms": 1780205191835}'), 1780205191835);

@@ -13,9 +13,15 @@
 <!-- 本番 index.html と同一の body 構造(.gaugebar / .mid / 全幅 #map)でヘッドアップを再現する -->
 <header>
   <h1>T33 本番レイアウト検証</h1>
+  <button id="panel-toggle" type="button">☰ 記録</button>
   <button id="s1">セッション1描画(広域)</button>
   <span id="status"></span>
 </header>
+<div class="layout">
+<aside id="panel" class="closed">
+  <div id="panel-list"></div>
+</aside>
+<div class="main">
 <div id="error"></div>
 <div id="warnings" class="warn"></div>
 <div class="gaugebar">
@@ -31,6 +37,8 @@
   <canvas id="graph"></canvas>
 </div>
 <div id="map" class="nomap"></div>
+</div>
+</div>
 
 <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"
         integrity="sha384-5+cfbwT0iiub6VsQAdn6yz16nr6sDiQoHx6tm4O8OVYXHYOxcffFmCJBL0dgdvGp"
@@ -61,6 +69,29 @@ Object.defineProperty(video, "videoWidth", { get: () => 0 });
 Object.defineProperty(video, "videoHeight", { get: () => 0 });
 const status = document.getElementById("status");
 document.getElementById("s1").onclick = () => { renderViewer(M, null); status.textContent = "描画完了(広域トラック)"; };
+
+// --- サイドパネル検証: モック日付2日×セッション計3件で本番と同じ結線を再現する ---
+import { createSessionPanel } from "./js/panel.js";
+const mockSessions = {
+  d1: [
+    { stem: "t33_20260711_090000", timeLabel: "09:00:00", dateLabel: "2026-07-11", mp4s: [{}, {}] },
+    { stem: "t33_20260711_140000", timeLabel: "14:00:00", dateLabel: "2026-07-11", mp4s: [] },
+  ],
+  d2: [ { stem: "t33_20260628_100000", timeLabel: "10:00:00", dateLabel: "2026-06-28", mp4s: [{}] } ],
+};
+const panel = createSessionPanel({
+  listEl: document.getElementById("panel-list"),
+  loadSessions: async (d) => mockSessions[d.id] || [],
+  onSelect: (s) => { renderViewer(M, null); status.textContent = `選択: ${s.stem}`; },
+});
+panel.setDates([
+  { id: "d1", name: "20260711", label: "2026-07-11" },
+  { id: "d2", name: "20260628", label: "2026-06-28" },
+]);
+document.getElementById("panel").classList.remove("closed");
+panel.expandDate({ id: "d1", name: "20260711", label: "2026-07-11" }, { autoSelectFirst: true });
+document.getElementById("panel-toggle").onclick = () =>
+  document.getElementById("panel").classList.toggle("closed");
 </script>
 </body>
 </html>
