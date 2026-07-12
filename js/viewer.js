@@ -8,6 +8,23 @@ function revokeActiveObjectUrl() {
   if (activeObjectUrl) { URL.revokeObjectURL(activeObjectUrl); activeObjectUrl = null; }
 }
 
+// 全画面(ネイティブコントロール)から通常表示へ戻ると、Chrome が動画フレームを
+// 全画面時の配置のまま合成し続け、上に黒帯・下寄せの表示ずれが出ることがある。
+// 復帰時に一度 reflow を挟んで再表示し、object-fit:contain の中央配置を回復する
+// (display の切替は再生を止めない)。登録はモジュール読込時の1回だけ。
+function repaintVideoAfterFullscreen() {
+  if (document.fullscreenElement || document.webkitFullscreenElement) return; // 入る側は対象外
+  const video = document.getElementById("video");
+  if (!video || video.style.display === "none") return;
+  requestAnimationFrame(() => {
+    video.style.display = "none";
+    void video.offsetHeight; // 強制 reflow
+    video.style.display = "";
+  });
+}
+document.addEventListener("fullscreenchange", repaintVideoAfterFullscreen);
+document.addEventListener("webkitfullscreenchange", repaintVideoAfterFullscreen);
+
 // ソート済み配列 arr で t に最近傍の index（タイは下側）。
 function nearest(arr, t) {
   let lo = 0, hi = arr.length - 1;
