@@ -7,20 +7,24 @@ button:disabled { opacity:.5; cursor:default; }
 #error { color:#b91c1c; padding:0 16px; font-size:.9rem; }
 .warn { color:#b45309; padding:0 16px; font-size:.85rem; }
 /* 最上部: ゲージを横一列・縦幅を絞った帯で表示 */
-.gaugebar { display:flex; gap:8px; padding:6px 12px; overflow-x:auto; }
+.gaugebar { display:flex; gap:8px; padding:6px 12px; overflow-x:auto; flex:0 0 auto; }
 .gauge { flex:1 1 0; min-width:104px; display:flex; align-items:baseline; gap:6px;
          background:#fbf8f1; border:1px solid #e3dac6; border-radius:6px; padding:3px 8px; white-space:nowrap; }
 .gauge .k { color:#877c69; font-size:.7rem; }
 .gauge .v { font-size:1.15rem; font-weight:700; margin-left:auto; }
 .gauge .u { color:#a99c86; font-size:.65rem; }
-/* 中段: 左=動画(横長) / 右=グラフ。高さを揃える */
-.mid { display:grid; grid-template-columns:1fr 1fr; gap:12px; padding:8px 12px; height:46vh; min-height:260px; }
-video { width:100%; height:100%; background:#000; border-radius:8px; object-fit:contain; }
-canvas#graph { width:100%; height:100%; display:block; background:#fbf8f1;
+/* 中段: 左=動画(16:9固定) / 右=グラフ。動画は高さ基準で 16:9 を保ち、
+   幅を変えても動画のサイズ・比率は変わらない(余った横幅はグラフ、余った縦は地図が吸収)。 */
+.mid { display:grid; grid-template-columns:auto 1fr; gap:12px; padding:8px 12px; align-items:start; flex:0 0 auto; }
+/* 動画: 高さ(vh)を基準に幅を 16:9 で算出。要素自体が 16:9 なので黒帯(レターボックス)は出ない。
+   狭すぎる画面でだけ max-width で頭打ちにする(その場合のみ contain が働く)。 */
+video { height:42vh; aspect-ratio:16/9; width:auto; max-width:100%; background:#000;
+        border-radius:8px; object-fit:contain; }
+canvas#graph { width:100%; height:42vh; display:block; background:#fbf8f1;
                border:1px solid #e3dac6; border-radius:8px; cursor:crosshair; }
-/* 下段: 全幅マップ(MapLibre GL のコンテナ) */
-#map { position:relative; margin:8px 12px 12px; background:#fbf8f1; border:1px solid #e3dac6; border-radius:8px;
-       height:40vh; min-height:280px; overflow:hidden; }
+/* 下段: 全幅マップ。残りの縦スペースを flex で吸収し、ウィンドウ変化は地図が受け持つ。 */
+#map { position:relative; flex:1 1 0; margin:8px 12px 12px; background:#fbf8f1; border:1px solid #e3dac6; border-radius:8px;
+       min-height:220px; overflow:hidden; }
 /* 右上のボタン群(全体を表示 / 進行方向を上)。地図の子ではないので回転の影響を受けない */
 #map .map-btns { position:absolute; top:8px; right:8px; z-index:1000; display:flex; flex-direction:column; gap:6px; align-items:flex-end; }
 /* 自車マーカー(MapLibre Marker の DOM 要素) */
@@ -28,8 +32,13 @@ canvas#graph { width:100%; height:100%; display:block; background:#fbf8f1;
               border:2px solid #fff; box-shadow:0 1px 4px rgba(0,0,0,.45); }
 #map .maplibregl-ctrl-attrib { font-size:10px; }
 @media (max-width:760px) {
-  .mid { grid-template-columns:1fr; height:auto; }
-  video, canvas#graph { height:240px; }
+  /* 狭い画面は縦積み + スクロール。動画は幅基準の 16:9、地図は固定高に戻す。 */
+  .layout { height:auto; }
+  .main { display:block; }
+  .mid { grid-template-columns:1fr; }
+  video { height:auto; width:100%; }
+  canvas#graph { height:240px; }
+  #map { flex:none; height:40vh; }
 }
 .fit-btn { font:inherit; font-size:.85rem; padding:5px 10px; border-radius:8px; border:1px solid #c9a227; background:#fbf8f1; color:#2c2722; cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,.2); }
 .fit-btn:hover { background:#f4efe3; }
@@ -38,9 +47,10 @@ canvas#graph { width:100%; height:100%; display:block; background:#fbf8f1;
 .headup-btn.active:hover { background:#1c4ea0; }
 .nomap { display:none; }
 .hidden { display:none; }
-/* 2カラム: 左サイドパネル(開閉) + 右メイン */
-.layout { display:flex; align-items:stretch; }
-.main { flex:1 1 0; min-width:0; }
+/* 2カラム: 左サイドパネル(開閉) + 右メイン。画面高いっぱいにして内部を縦フレックスにする
+   (地図が残りの縦を吸収するため、.main は高さを親から受け取る)。 */
+.layout { display:flex; align-items:stretch; height:calc(100vh - 58px); }
+.main { flex:1 1 0; min-width:0; display:flex; flex-direction:column; min-height:0; }
 #panel { width:232px; flex:0 0 auto; background:#efe7d4; border-right:1px solid #e3dac6;
          padding:10px 10px 24px; overflow-y:auto; max-height:calc(100vh - 58px); }
 #panel.closed { display:none; }
