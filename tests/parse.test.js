@@ -159,6 +159,14 @@ test("groupSessions: mp4 が無いセッションは mp4s 空配列", () => {
   const s = groupSessions(FILES).find((x) => x.stem === "t33_20260619_090000");
   assert.deepEqual(s.mp4s, []);
 });
+test("groupSessions: mp4 の size があれば保持する(壊れたセグメント除外に使う)", () => {
+  const seg = [
+    { id: "s0", name: "t33_20260620_101530_001.mp4", size: "1000" },
+    { id: "sc", name: "t33_20260620_101530.csv" },
+  ];
+  const s = groupSessions(seg)[0];
+  assert.equal(s.mp4s[0].size, "1000");
+});
 test("groupSessions: 表示ラベル", () => {
   const s = groupSessions(FILES)[0];
   assert.equal(s.dateLabel, "2026-06-20");

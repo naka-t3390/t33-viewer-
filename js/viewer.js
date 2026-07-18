@@ -63,6 +63,7 @@ export function renderViewer(model, playback) {
   let currentSeg = 0;
   let pendingSeek = null;      // loadedmetadata 後に適用するローカルシーク秒
   let pendingAutoplay = false; // loadedmetadata 後に自動再生するか
+  let lastAutoplay = false;    // 直近 loadSegment の autoplay 意図(エラー時スキップで引き継ぐ)
 
   // 全体タイムライン上の現在時刻（秒）= 現セグメントの開始オフセット + ローカル再生位置。
   function globalTime() {
@@ -73,6 +74,7 @@ export function renderViewer(model, playback) {
   async function loadSegment(i, localTime, autoplay) {
     if (i < 0 || i >= segments.length) return;
     currentSeg = i;
+    lastAutoplay = autoplay;
     revokeActiveObjectUrl();
     pendingSeek = localTime;
     pendingAutoplay = autoplay;
@@ -96,9 +98,19 @@ export function renderViewer(model, playback) {
     // 次セグメントがあれば先頭から自動再生し、10分境界をまたいで連続再生する（H3）。
     if (currentSeg + 1 < segments.length) loadSegment(currentSeg + 1, 0, true);
   };
-  // 再生失敗の可視化。SW/認証系の失敗は video 要素の中では無音になりがちなので、
-  // MediaError と、同じ src を fetch した実 HTTP ステータスを #error に出して切り分ける。
+  // 壊れたセグメントの実行時スキップ + 再生失敗の可視化。
+  // スリープ/Doze/切断で moov 未書き込みの mp4 は 0バイト(HTTP 416)や再生不可(DEMUXER)になる。
+  // 0バイトは buildSegmentPlaylist が事前除外するが、サイズは大きいが moov 無しの破損は
+  // 再生してみないと分からないため、ここで次セグメントへ飛ばして連続再生を続ける。
   video.onerror = async () => {
+    // まだ後続セグメントがあるなら、壊れた1本を飛ばして次を試す(直近の再生意図を引き継ぐ)。
+    if (currentSeg + 1 < segments.length) {
+      document.getElementById("error").textContent =
+        "一部の映像が壊れているため、その区間をスキップしました";
+      loadSegment(currentSeg + 1, 0, lastAutoplay);
+      return;
+    }
+    // 最終セグメントまで全滅した場合のみ、原因切り分け用に MediaError と実 HTTP を出す。
     const me = video.error;
     let http = "";
     try {

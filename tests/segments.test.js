@@ -110,6 +110,59 @@ test("buildSegmentPlaylist: mp4 が無ければ空配列", () => {
   assert.deepEqual(buildSegmentPlaylist([], { videoStartMs: 1000, segments: [] }), []);
 });
 
+// 壊れたセグメント(スリープ/Doze/切断で 0バイト・極小になった mp4)は
+// 再生すると HTTP 416 / DEMUXER エラーになる。プレイリストから事前除外する。
+
+test("buildSegmentPlaylist: 0バイトの壊れたセグメントは除外する", () => {
+  const mp4s = [
+    { id: "ID1", name: "t33_20260704_083000_001.mp4", size: 1_200_000_000 },
+    { id: "ID2", name: "t33_20260704_083000_002.mp4", size: 0 }, // 壊れた0バイト
+  ];
+  const meta = parseSegmentedMeta(SEGMENTED_JSON);
+  const pl = buildSegmentPlaylist(mp4s, meta);
+  assert.deepEqual(pl.map((p) => p.id), ["ID1"]);
+});
+
+test("buildSegmentPlaylist: 極小(閾値未満)セグメントは除外する", () => {
+  const mp4s = [
+    { id: "ID1", name: "t33_20260704_083000_001.mp4", size: 1_200_000_000 },
+    { id: "ID2", name: "t33_20260704_083000_002.mp4", size: 500 },
+  ];
+  const meta = parseSegmentedMeta(SEGMENTED_JSON);
+  const pl = buildSegmentPlaylist(mp4s, meta);
+  assert.deepEqual(pl.map((p) => p.id), ["ID1"]);
+});
+
+test("buildSegmentPlaylist: Drive size は文字列でも数値として判定する", () => {
+  // Drive API v3 の files.size は文字列("0" 等)で返る。
+  const mp4s = [
+    { id: "ID1", name: "t33_20260704_083000_001.mp4", size: "1200000000" },
+    { id: "ID2", name: "t33_20260704_083000_002.mp4", size: "0" },
+  ];
+  const meta = parseSegmentedMeta(SEGMENTED_JSON);
+  const pl = buildSegmentPlaylist(mp4s, meta);
+  assert.deepEqual(pl.map((p) => p.id), ["ID1"]);
+});
+
+test("buildSegmentPlaylist: size 未取得(undefined)なら除外しない(後方互換)", () => {
+  const mp4s = [
+    { id: "ID1", name: "t33_20260704_083000_001.mp4" },
+    { id: "ID2", name: "t33_20260704_083000_002.mp4" },
+  ];
+  const meta = parseSegmentedMeta(SEGMENTED_JSON);
+  const pl = buildSegmentPlaylist(mp4s, meta);
+  assert.equal(pl.length, 2);
+});
+
+test("buildSegmentPlaylist: フォールバック(メタ無し)でも 0バイトは除外する", () => {
+  const mp4s = [
+    { id: "IDA", name: "t33_x_001.mp4", size: 500_000 },
+    { id: "IDB", name: "t33_x_002.mp4", size: 0 },
+  ];
+  const pl = buildSegmentPlaylist(mp4s, { videoStartMs: null, segments: [] });
+  assert.deepEqual(pl.map((p) => p.id), ["IDA"]);
+});
+
 // ---- segmentAtGlobalTime ----
 // グローバル時刻(全体タイムラインの秒)から、対象セグメント index と
 // そのセグメント内ローカル時刻を求める(グラフクリックのシーク用)。

@@ -132,9 +132,15 @@ export function groupSessions(files) {
       });
     }
     // mp4 は 10分セグメント分割で複数になりうるため配列に集約する（id と name を保持）。
+    // size があれば壊れた 0バイトセグメントの事前除外に使う(無い入力では付けない=後方互換)。
     // 他種別（csv/kml/json）は 1 セッション 1 本なので id を直接持つ。
-    if (kind === "mp4") map.get(stem).mp4s.push({ id: f.id, name: f.name });
-    else map.get(stem)[kind] = f.id;
+    if (kind === "mp4") {
+      const item = { id: f.id, name: f.name };
+      if (f.size != null) item.size = f.size;
+      map.get(stem).mp4s.push(item);
+    } else {
+      map.get(stem)[kind] = f.id;
+    }
   }
   return [...map.values()]
     .filter((s) => s.csv !== null)
@@ -172,6 +178,17 @@ export function parseSegmentedMeta(jsonText) {
 //   Drive に存在しない segment はスキップする。
 // - メタが無い(旧単一/未書込)場合は name 昇順に並べ、先頭 baseOffset=0、
 //   以降は null（viewer 側が loadedmetadata の実測 duration で累積する）。
+// 有効なセグメントとみなす最小サイズ（バイト）。端末側 VideoSessionTarget.MIN_VALID_SEGMENT_BYTES
+// と揃える。スリープ/Doze/切断で 0バイト・極小になった壊れた mp4 を弾く安全ライン。
+export const MIN_VALID_SEGMENT_BYTES = 8 * 1024;
+
+// Drive の files.size（API v3 は文字列で返る）を見て、壊れた 0バイト/極小 mp4 でないか判定する。
+// size 未取得（undefined/null/NaN）なら判定不能として通す（再生時スキップに委ねる）。
+function segmentSizeOk(file) {
+  const n = Number(file && file.size);
+  return !Number.isFinite(n) || n >= MIN_VALID_SEGMENT_BYTES;
+}
+
 export function buildSegmentPlaylist(mp4s, meta) {
   const files = Array.isArray(mp4s) ? mp4s : [];
   if (files.length === 0) return [];
@@ -184,12 +201,15 @@ export function buildSegmentPlaylist(mp4s, meta) {
     for (const seg of segs) {
       const f = byName.get(seg.file);
       if (!f) continue;
+      if (!segmentSizeOk(f)) continue; // 0バイト/極小の壊れたセグメントは載せない(416防止)
       playlist.push({ id: f.id, name: f.name, baseOffsetSec: (seg.startMs - videoStartMs) / 1000 });
     }
     return playlist;
   }
 
-  const sorted = [...files].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const sorted = [...files]
+    .filter(segmentSizeOk) // メタ無しフォールバックでも壊れた 0バイトは除外する
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   return sorted.map((f, i) => ({ id: f.id, name: f.name, baseOffsetSec: i === 0 ? 0 : null }));
 }
 
