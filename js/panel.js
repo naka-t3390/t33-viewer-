@@ -5,11 +5,26 @@ import { sessionCardMeta } from "./parse.js";
 export function createSessionPanel({ listEl, loadSessions, onSelect }) {
   const cache = new Map();       // dateId -> Session[]
   const sessionsBox = new Map(); // dateId -> カード挿入先 DOM
+  const durations = new Map();   // stem -> 実記録秒(CSV実測)。setDuration で後から届く
   let selectedStem = null;
 
   function cardLabel(meta) {
-    const video = meta.hasVideo ? ` 🎬 約${meta.approxMin}分` : " (動画なし)";
-    return `${meta.timeLabel}${video}`;
+    const video = meta.hasVideo ? " 🎬" : " (動画なし)";
+    // 記録時間は CSV を取得できるまで出さない(推定値を出すと実際と食い違う)。
+    const duration = meta.durationLabel ? ` ${meta.durationLabel}` : "";
+    return `${meta.timeLabel}${video}${duration}`;
+  }
+
+  /**
+   * セッションの実記録時間(秒)を反映する。カードの描画は Drive のファイル一覧だけで
+   * 先に済ませ、CSV の取得が終わった順にここへ流し込む(一覧の表示を待たせない)。
+   */
+  function setDuration(stem, sec) {
+    durations.set(stem, sec);
+    const btn = listEl.querySelector(`.session-card[data-stem="${stem}"]`);
+    if (!btn) return; // 折りたたみ中などで DOM が無ければ、次の描画で durations から復元される
+    const session = [...cache.values()].flat().find((s) => s.stem === stem);
+    if (session) btn.textContent = cardLabel(sessionCardMeta(session, sec));
   }
 
   function renderCards(dateId, sessions) {
@@ -28,7 +43,7 @@ export function createSessionPanel({ listEl, loadSessions, onSelect }) {
       btn.type = "button";
       btn.className = "session-card";
       btn.dataset.stem = s.stem;
-      btn.textContent = cardLabel(sessionCardMeta(s));
+      btn.textContent = cardLabel(sessionCardMeta(s, durations.get(s.stem) ?? null));
       if (s.stem === selectedStem) btn.classList.add("active");
       btn.addEventListener("click", () => { markSelected(s.stem); onSelect(s); });
       box.appendChild(btn);
@@ -84,5 +99,5 @@ export function createSessionPanel({ listEl, loadSessions, onSelect }) {
     }
   }
 
-  return { setDates, expandDate, markSelected };
+  return { setDates, expandDate, markSelected, setDuration };
 }

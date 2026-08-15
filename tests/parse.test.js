@@ -8,22 +8,67 @@ import { hvLabel } from "../js/parse.js";
 import { groupSessions } from "../js/parse.js";
 import { buildViewModel } from "../js/parse.js";
 import { selectDateFolders, partitionDateChildren } from "../js/parse.js";
-import { sessionCardMeta } from "../js/parse.js";
+import { sessionCardMeta, csvDurationSec, formatDuration } from "../js/parse.js";
 
-// sessionCardMeta: サイドパネルのカード表示用メタ(時刻・動画有無・推定分数)
-test("sessionCardMeta: 動画なしは hasVideo=false, approxMin=null", () => {
+// sessionCardMeta: サイドパネルのカード表示用メタ(時刻・動画有無・記録時間)
+// 記録時間は CSV の実測(秒)を外から渡す。動画セグメント数からの推定はしない
+// ―― 2026-08-15 の走行では実記録 1分50秒 のセッションが「約10分」と表示された。
+test("sessionCardMeta: 動画なしは hasVideo=false, durationLabel=null", () => {
   const meta = sessionCardMeta({ timeLabel: "09:15:00", mp4s: [] });
-  assert.deepEqual(meta, { timeLabel: "09:15:00", hasVideo: false, approxMin: null });
+  assert.deepEqual(meta, { timeLabel: "09:15:00", hasVideo: false, durationLabel: null });
 });
 
-test("sessionCardMeta: セグメント3本で約30分", () => {
-  const meta = sessionCardMeta({ timeLabel: "10:00:00", mp4s: [{}, {}, {}] });
-  assert.deepEqual(meta, { timeLabel: "10:00:00", hasVideo: true, approxMin: 30 });
+test("sessionCardMeta: 実測秒を渡すと durationLabel になる", () => {
+  const meta = sessionCardMeta({ timeLabel: "10:00:00", mp4s: [{}, {}, {}] }, 952);
+  assert.deepEqual(meta, { timeLabel: "10:00:00", hasVideo: true, durationLabel: "15分52秒" });
+});
+
+test("sessionCardMeta: 実測が未取得なら durationLabel=null(動画有無は出す)", () => {
+  const meta = sessionCardMeta({ timeLabel: "10:00:00", mp4s: [{}] });
+  assert.deepEqual(meta, { timeLabel: "10:00:00", hasVideo: true, durationLabel: null });
 });
 
 test("sessionCardMeta: mp4s が配列でなくても安全", () => {
   const meta = sessionCardMeta({ timeLabel: "11:00:00", mp4s: null });
-  assert.deepEqual(meta, { timeLabel: "11:00:00", hasVideo: false, approxMin: null });
+  assert.deepEqual(meta, { timeLabel: "11:00:00", hasVideo: false, durationLabel: null });
+});
+
+// formatDuration: 一覧で読みやすい長さ表記
+test("formatDuration: 60秒未満は秒だけ", () => {
+  assert.equal(formatDuration(42), "42秒");
+});
+test("formatDuration: 分と秒", () => {
+  assert.equal(formatDuration(110), "1分50秒");
+});
+test("formatDuration: 秒が0なら分だけ", () => {
+  assert.equal(formatDuration(420), "7分");
+});
+test("formatDuration: null/負値は null", () => {
+  assert.equal(formatDuration(null), null);
+  assert.equal(formatDuration(-1), null);
+});
+
+// csvDurationSec: 走行CSVの先頭データ行と最終行の timestamp_ms 差 = 実記録時間
+const DURATION_CSV = [
+  "timestamp_iso,timestamp_ms,vehicle_speed_kmh",
+  "2026-08-15T14:35:00.152,1786772100152,0.00",
+  "2026-08-15T14:35:30.000,1786772130152,10.00",
+  "2026-08-15T14:36:39.083,1786772210152,0.00",
+].join("\n");
+
+test("csvDurationSec: 先頭行と最終行の差を秒で返す", () => {
+  assert.equal(csvDurationSec(DURATION_CSV), 110);
+});
+
+test("csvDurationSec: データ行が1行以下なら null", () => {
+  assert.equal(csvDurationSec("timestamp_iso,timestamp_ms\n1,2"), null);
+  assert.equal(csvDurationSec("timestamp_iso,timestamp_ms"), null);
+  assert.equal(csvDurationSec(""), null);
+});
+
+test("csvDurationSec: timestamp_ms が数値でない行は null", () => {
+  const bad = "timestamp_iso,timestamp_ms\na,x\nb,y";
+  assert.equal(csvDurationSec(bad), null);
 });
 
 test("parseVideoStartMs: 有効JSONはepoch msを返す", () => {
@@ -155,6 +200,28 @@ test("groupSessions: 連番mp4は同一セッションの mp4s に集約する",
     "t33_20260620_101530_001.mp4",
   ]);
 });
+// CAN 生ログ(t33_..._can.csv)は走行CSVではない。同じセッションフォルダに並ぶうえ
+// Drive の列挙順は不定なので、拡張子だけで判定すると走行CSVを上書きしてしまう
+// ―― 2026-08-15 の 14:34 セッションで「CSV にデータ行がありません」が出た原因。
+test("groupSessions: _can.csv は走行CSVを上書きしない(CANが後に来ても)", () => {
+  const files = [
+    { id: "run", name: "t33_20260815_143450.csv" },
+    { id: "can", name: "t33_20260815_143450_can.csv" },
+  ];
+  assert.equal(groupSessions(files)[0].csv, "run");
+});
+test("groupSessions: _can.csv が先に来ても走行CSVを採る", () => {
+  const files = [
+    { id: "can", name: "t33_20260815_143450_can.csv" },
+    { id: "run", name: "t33_20260815_143450.csv" },
+  ];
+  assert.equal(groupSessions(files)[0].csv, "run");
+});
+test("groupSessions: _can.csv しか無いセッションは一覧に出さない", () => {
+  const files = [{ id: "can", name: "t33_20260815_143450_can.csv" }];
+  assert.deepEqual(groupSessions(files), []);
+});
+
 test("groupSessions: mp4 が無いセッションは mp4s 空配列", () => {
   const s = groupSessions(FILES).find((x) => x.stem === "t33_20260619_090000");
   assert.deepEqual(s.mp4s, []);
@@ -194,13 +261,17 @@ test("groupSessions: 同名重複は大きい方(完全なほう)を残す", () 
   assert.equal(s.mp4s.length, 1);
   assert.equal(s.mp4s[0].id, "big");
 });
-test("sessionCardMeta: 重複を畳んだ本数で記録時間を出す", () => {
+// 記録時間は CSV 実測になったので、重複mp4は「再生を二度流さないため」に畳む。
+// 畳めていることは mp4s の本数で直接確かめる。
+test("groupSessions: 同名mp4の二重送信は1本に畳む", () => {
   const seg = [
     { id: "s1a", name: "t33_20260620_101530_001.mp4" },
     { id: "s1b", name: "t33_20260620_101530_001.mp4" },
     { id: "sc", name: "t33_20260620_101530.csv" },
   ];
-  assert.equal(sessionCardMeta(groupSessions(seg)[0]).approxMin, 10);
+  const s = groupSessions(seg)[0];
+  assert.equal(s.mp4s.length, 1);
+  assert.equal(sessionCardMeta(s).hasVideo, true);
 });
 test("groupSessions: 表示ラベル", () => {
   const s = groupSessions(FILES)[0];

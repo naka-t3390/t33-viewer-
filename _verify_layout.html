@@ -90,6 +90,11 @@ panel.setDates([
 ]);
 document.getElementById("panel").classList.remove("closed");
 panel.expandDate({ id: "d1", name: "20260711", label: "2026-07-11" }, { autoSelectFirst: true });
+// 記録時間は本番でも CSV 取得後に遅れて届く。長短の両極(15分台と1分台)で桁を確認する。
+setTimeout(() => {
+  panel.setDuration("t33_20260711_090000", 938); // 15分38秒
+  panel.setDuration("t33_20260711_140000", 99);  // 1分39秒(動画なし)
+}, 300);
 document.getElementById("panel-toggle").onclick = () =>
   document.getElementById("panel").classList.toggle("closed");
 </script>

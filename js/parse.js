@@ -107,6 +107,11 @@ const SESSION_RE = /^t33_(\d{8})_(\d{6})/;
 
 function classifyKind(name) {
   if (name.endsWith("_video.json")) return "json";
+  // CAN 生ログ(t33_..._can.csv)は走行CSVと同じセッションフォルダに並ぶが、列も用途も別物。
+  // 拡張子だけで判定すると、Drive の列挙順(不定)しだいで走行CSVを上書きしてしまう
+  // ―― 2026-08-15 の 14:34 セッションで、ヘッダだけの CAN ログを走行CSVとして読み
+  // 「CSV にデータ行がありません」になった。ここで明示的に除外する。
+  if (name.endsWith("_can.csv")) return null;
   if (name.endsWith(".csv")) return "csv";
   if (name.endsWith(".kml")) return "kml";
   if (name.endsWith(".mp4")) return "mp4";
@@ -316,13 +321,49 @@ export function partitionDateChildren(children) {
   return { timeFolders, directFiles };
 }
 
-// サイドパネルのセッションカード表示用メタ。動画は10分セグメント分割なので
-// おおよその記録時間 = セグメント数 × 10分（最終セグメントは短い可能性あり）。
-export function sessionCardMeta(session) {
+/**
+ * 走行CSVの実記録時間(秒)。先頭データ行と最終行の timestamp_ms の差。
+ *
+ * 動画セグメント数から推定しない。録画は10分ごとに区切られるだけで、記録開始から
+ * 停止までの長さとは一致しないため ―― 2026-08-15 の走行では実記録 1分50秒 の
+ * セッションが1セグメント持っていたので「約10分」と表示された。
+ *
+ * 判定できない入力(データ行が1行以下、timestamp_ms が数値でない)は null を返す。
+ */
+export function csvDurationSec(csvText) {
+  const lines = splitCsvLines(csvText);
+  if (lines.length < 3) return null; // ヘッダ + データ2行以上でないと差が取れない
+  const msAt = (line) => {
+    const ms = Number(line.split(",")[1]);
+    return Number.isFinite(ms) ? ms : null;
+  };
+  const first = msAt(lines[1]);
+  const last = msAt(lines[lines.length - 1]);
+  if (first === null || last === null || last < first) return null;
+  return Math.round((last - first) / 1000);
+}
+
+/** 一覧向けの長さ表記。60秒未満は「42秒」、以降は「1分50秒」「7分」。 */
+export function formatDuration(sec) {
+  if (typeof sec !== "number" || !Number.isFinite(sec) || sec < 0) return null;
+  const total = Math.round(sec);
+  if (total < 60) return `${total}秒`;
+  const min = Math.floor(total / 60);
+  const rest = total % 60;
+  return rest === 0 ? `${min}分` : `${min}分${rest}秒`;
+}
+
+/**
+ * サイドパネルのセッションカード表示用メタ。
+ *
+ * @param durationSec [csvDurationSec] の実測値。CSV は一覧の描画後に非同期で取得するため、
+ *   未取得の間は省略でき、その場合 durationLabel は null(=長さを出さない)になる。
+ */
+export function sessionCardMeta(session, durationSec = null) {
   const n = Array.isArray(session.mp4s) ? session.mp4s.length : 0;
   return {
     timeLabel: session.timeLabel,
     hasVideo: n > 0,
-    approxMin: n > 0 ? n * 10 : null,
+    durationLabel: formatDuration(durationSec),
   };
 }
