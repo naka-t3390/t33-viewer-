@@ -1,7 +1,7 @@
 import { hvLabel, segmentAtGlobalTime } from "./parse.js";
 import { computeTimeDomain } from "./timeline.js";
 import { createSessionLifecycle } from "./lifecycle.js";
-import { headingAt } from "./geo.js";
+import { headingAt, distanceMeters, nearestPassIndex } from "./geo.js";
 
 // 非SW フォールバック時の blob URL。次セグメント読込・セッション切替の前に解放する。
 let activeObjectUrl = null;
@@ -267,6 +267,24 @@ export function renderViewer(model, playback) {
       lastAppliedBearing = null;
       applyHeadUp(globalTime());
     });
+
+    // --- 軌跡のクリックで、その地点を通った時刻へ動画を飛ばす ---
+    // 許容範囲は画面上のピクセルで決める。メートルで固定すると、広域表示では
+    // 軌跡を押しても届かず、拡大時は離れた場所でも反応してしまうため。
+    const CLICK_RADIUS_PX = 40;
+    lmap.on("click", (e) => {
+      if (!segments.length) return; // 動画なしセッションは飛び先がない
+      // クリック点から CLICK_RADIUS_PX だけ横の点を緯度経度へ戻し、実距離に換算する。
+      const edge = lmap.unproject([e.point.x + CLICK_RADIUS_PX, e.point.y]);
+      const radiusM = distanceMeters(e.lngLat.lat, e.lngLat.lng, edge.lat, edge.lng);
+      const j = nearestPassIndex(
+        track, { lat: e.lngLat.lat, lon: e.lngLat.lng }, radiusM, globalTime()
+      );
+      if (j >= 0) seekToGlobal(track[j].t);
+    });
+    // 軌跡の上ではカーソルを指マークにして、押せることを示す。
+    lmap.on("mouseenter", "track-line", () => { lmap.getCanvas().style.cursor = "pointer"; });
+    lmap.on("mouseleave", "track-line", () => { lmap.getCanvas().style.cursor = ""; });
   } else {
     lifecycle.replaceMap(null); // 軌跡なしセッション: 前回マップがあれば破棄する
     mapEl.classList.add("nomap");
@@ -364,11 +382,9 @@ export function renderViewer(model, playback) {
     // 再スケジュールは lifecycle.restartLoop が一元管理する(多重ループ防止)。
   }
 
-  cv.onclick = (e) => {
-    const r = cv.getBoundingClientRect(), P = plot();
-    const frac = (e.clientX - r.left - P.x) / (P.w || 1);
-    const cl = Math.min(1, Math.max(0, frac));
-    const target = tMin + cl * (tMax - tMin); // クリック位置のグローバル時刻（秒）
+  // グローバル時刻(秒)へ移動する。グラフのクリックと地図のクリックが共用する。
+  // 再生状態は変えない ―― 再生中なら移動先から再生が続き、一時停止中は止まったまま。
+  function seekToGlobal(target) {
     if (segments.length > 1) {
       // 確定済み baseOffsets で対象セグメントとローカル時刻を求め、跨ぎシークする。
       const playlist = baseOffsets.map((b) => ({ baseOffsetSec: b }));
@@ -377,6 +393,13 @@ export function renderViewer(model, playback) {
       if (index >= 0) { video.currentTime = localTime; return; }
     }
     video.currentTime = target; // 単一セグメント（従来動作）
+  }
+
+  cv.onclick = (e) => {
+    const r = cv.getBoundingClientRect(), P = plot();
+    const frac = (e.clientX - r.left - P.x) / (P.w || 1);
+    const cl = Math.min(1, Math.max(0, frac));
+    seekToGlobal(tMin + cl * (tMax - tMin)); // クリック位置のグローバル時刻（秒）
   };
 
   lifecycle.bindResize(fit); // window への登録は1度だけ。常に最新の fit を呼ぶ

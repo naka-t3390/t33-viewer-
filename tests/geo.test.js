@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bearingDeg, distanceMeters, headingAt } from "../js/geo.js";
+import { bearingDeg, distanceMeters, headingAt, nearestPassIndex } from "../js/geo.js";
 
 // 方位角: 0=北, 90=東, 180=南, 270=西。緯度経度差から方向を検証する。
 test("bearingDeg: 真北へ移動すると約0度", () => {
@@ -70,4 +70,57 @@ test("headingAt: 前方が微動でも後方の点まで遡って方位を算出
   ];
   const h = headingAt(mixed, 2, 5);
   assert.ok(h != null && Math.abs(h - 90) < 2, `got ${h}`);
+});
+
+// nearestPassIndex: 地図でクリックした地点を「いつ通ったか」を返す。
+// 緯度35°では 経度0.0001度 ≈ 9.1m。以下の軌跡はこの間隔で東へ進む。
+const LINE = Array.from({ length: 11 }, (_, i) => ({
+  t: i, lat: 35.0, lon: 139.0 + i * 0.0001,
+}));
+
+test("nearestPassIndex: 軌跡上をクリックすると最も近い点の index", () => {
+  assert.equal(nearestPassIndex(LINE, { lat: 35.0, lon: 139.0003 }, 20, 0), 3);
+});
+
+test("nearestPassIndex: 半径外のクリックは -1(誤タップで動画を飛ばさない)", () => {
+  // 緯度0.01度 ≈ 1.1km 北。半径20mには遠く及ばない。
+  assert.equal(nearestPassIndex(LINE, { lat: 35.01, lon: 139.0003 }, 20, 0), -1);
+});
+
+test("nearestPassIndex: 軌跡が空/不正なら -1", () => {
+  assert.equal(nearestPassIndex([], { lat: 35.0, lon: 139.0 }, 20, 0), -1);
+  assert.equal(nearestPassIndex(null, { lat: 35.0, lon: 139.0 }, 20, 0), -1);
+});
+
+// 往復: t=0..5 で東へ、t=6..11 で同じ道を西へ戻る。同じ地点を2度通る。
+const ROUND = [
+  ...Array.from({ length: 6 }, (_, i) => ({ t: i, lat: 35.0, lon: 139.0 + i * 0.0001 })),
+  ...Array.from({ length: 6 }, (_, i) => ({ t: 6 + i, lat: 35.0, lon: 139.0 + (5 - i) * 0.0001 })),
+];
+
+test("nearestPassIndex: 往路を再生中なら往路の通過を選ぶ", () => {
+  // lon 139.0002 は往路 index 2(t=2)と復路 index 9(t=9)。半径8mでこの2点だけが入る。
+  assert.equal(nearestPassIndex(ROUND, { lat: 35.0, lon: 139.0002 }, 8, 1), 2);
+});
+
+test("nearestPassIndex: 復路を再生中なら復路の通過を選ぶ", () => {
+  assert.equal(nearestPassIndex(ROUND, { lat: 35.0, lon: 139.0002 }, 8, 10), 9);
+});
+
+// GPS が一時的に飛んだ1点(55m北)を挟んでも、前後は同じ1回の通過である。
+// これを2つの通過と数えると、再生位置しだいで手前と奥に振られてしまう。
+const GAP = [
+  { t: 0, lat: 35.0, lon: 139.0 },
+  { t: 1, lat: 35.0, lon: 139.0001 },
+  { t: 2, lat: 35.0, lon: 139.000195 }, // クリック点まで約0.46m
+  { t: 3, lat: 35.0005, lon: 139.0002 }, // 飛んだ点(半径外)
+  { t: 4, lat: 35.0, lon: 139.00021 },  // 約0.91m
+  { t: 5, lat: 35.0, lon: 139.0003 },
+];
+
+test("nearestPassIndex: GPS欠落で途切れても近接する点は同じ通過として畳む", () => {
+  const click = { lat: 35.0, lon: 139.0002 };
+  // 1つの通過に畳まれていれば、再生位置がどこでも同じ(最も近い)点を指す。
+  assert.equal(nearestPassIndex(GAP, click, 8, 0), 2);
+  assert.equal(nearestPassIndex(GAP, click, 8, 100), 2);
 });
