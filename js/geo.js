@@ -26,42 +26,69 @@ export function distanceMeters(lat1, lon1, lat2, lon2) {
   return 2 * EARTH_RADIUS_M * Math.asin(Math.min(1, Math.sqrt(a)));
 }
 
-// 同じ1回の通過とみなすインデックス差。GPS が数点だけ大きく飛ぶと、半径内の点が
-// 途切れて「2回通った」ように見える。その揺らぎを吸収する幅であって、往復や周回
-// (通常は何十点も離れる)まで畳んでしまわない程度に小さく取る。
+// 同じ1回の通過とみなす区間インデックスの差。半径内の区間が一時的に途切れても
+// (大きく膨らんだ迂回など)同じ通過として扱うための幅であり、往復や周回
+// (通常は何十区間も離れる)まで畳んでしまわない程度に小さく取る。
 const SAME_PASS_GAP = 5;
 
+/** 緯度1度あたりのメートル。[distanceMeters] と同じ地球半径から導く。 */
+const M_PER_DEG = (Math.PI * EARTH_RADIUS_M) / 180;
+
 /**
- * 地図でクリックした地点を「いつ通ったか」を返す。戻り値は track のインデックス、
- * 該当なしは -1。
+ * 点から線分 A→B への最短距離(m)と、線分上での位置比 [0,1] を返す。
  *
- * radiusMeters 以内の点を集め、インデックスが近い塊を1回の通過としてまとめる。
- * 塊ごとに最もクリック点へ近い点を代表とし、代表が複数あるとき(往復・周回で同じ
+ * 数十メートルの範囲しか見ないので、点を原点とする局所平面へ近似する
+ * (経度方向は緯度で縮む分を cos で補正)。
+ */
+function segmentDistance(pLat, pLon, aLat, aLon, bLat, bLon) {
+  const k = Math.cos(toRad(pLat));
+  const ax = (aLon - pLon) * k * M_PER_DEG, ay = (aLat - pLat) * M_PER_DEG;
+  const bx = (bLon - pLon) * k * M_PER_DEG, by = (bLat - pLat) * M_PER_DEG;
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  // 長さ0の区間(停車中に同じ座標が続く)は端点そのものとして扱う。
+  const ratio = len2 === 0 ? 0 : Math.max(0, Math.min(1, -(ax * dx + ay * dy) / len2));
+  return { distance: Math.hypot(ax + ratio * dx, ay + ratio * dy), ratio };
+}
+
+/**
+ * 地図でクリックした地点を「いつ通ったか」(秒)で返す。該当なしは null。
+ *
+ * **点ではなく区間(隣り合う2点を結ぶ線分)との距離で判定する。** GPS 点の間隔は
+ * 実測で中央値22m あり、線の中間は最寄りの点から10m 以上離れる。地図を拡大すると
+ * 許容半径(画面上の px 換算)がそれより小さくなるため、点だけを見ていると
+ * 「線の上を押しているのに反応しない」ことになる(2026-08-15 に実際に起きた)。
+ * 時刻は区間上の位置で内挿するので、点と点の中間を押せばその中間の時刻になる。
+ *
+ * radiusMeters 以内の区間を集め、インデックスが近い塊を1回の通過としてまとめる。
+ * 塊ごとに最もクリック点へ近い位置を代表とし、代表が複数あるとき(往復・周回で同じ
  * 地点を何度も通った場合)は currentT に時間的に最も近い通過を選ぶ ―― いま見ている
  * 場面の近くへ飛ぶのが、地図をなぞって前後を見返す使い方に合うため。
  */
-export function nearestPassIndex(track, point, radiusMeters, currentT) {
-  if (!Array.isArray(track) || track.length === 0 || !point) return -1;
-  let best = -1;      // 採用中の通過の代表点
-  let passIndex = -1; // いま見ている通過の代表点
+export function nearestPassTime(track, point, radiusMeters, currentT) {
+  if (!Array.isArray(track) || track.length === 0 || !point) return null;
+  if (track.length === 1) {
+    const d = distanceMeters(track[0].lat, track[0].lon, point.lat, point.lon);
+    return d <= radiusMeters ? track[0].t : null;
+  }
+  let best = null;     // 採用中の通過の時刻
+  let passTime = null; // いま見ている通過の代表時刻
   let passDist = Infinity;
   let lastHit = -Infinity;
   // 通過を1つ閉じるたびに、採用中の代表と currentT への近さで比べ直す。
   const closePass = () => {
-    if (passIndex < 0) return;
-    const better = best < 0 ||
-      Math.abs(track[passIndex].t - currentT) < Math.abs(track[best].t - currentT);
-    if (better) best = passIndex;
-    passIndex = -1;
+    if (passTime === null) return;
+    if (best === null || Math.abs(passTime - currentT) < Math.abs(best - currentT)) best = passTime;
+    passTime = null;
     passDist = Infinity;
   };
-  for (let i = 0; i < track.length; i++) {
-    const p = track[i];
-    const d = distanceMeters(p.lat, p.lon, point.lat, point.lon);
-    if (d > radiusMeters) continue;
+  for (let i = 0; i < track.length - 1; i++) {
+    const a = track[i], b = track[i + 1];
+    const { distance, ratio } = segmentDistance(point.lat, point.lon, a.lat, a.lon, b.lat, b.lon);
+    if (distance > radiusMeters) continue;
     if (i - lastHit > SAME_PASS_GAP) closePass(); // 前の塊から離れた=別の通過
     lastHit = i;
-    if (d < passDist) { passDist = d; passIndex = i; }
+    if (distance < passDist) { passDist = distance; passTime = a.t + ratio * (b.t - a.t); }
   }
   closePass();
   return best;
