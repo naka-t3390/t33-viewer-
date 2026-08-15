@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>背景(グレー壁紙)候補</title>
+<style>
+  :root { --cream:#f4efe3; --panel:#efe7d4; --card:#fbf8f1; --bd:#e3dac6; --gold:#c9a227; --ink:#2c2722; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,"Hiragino Sans",sans-serif; color:var(--ink); background:#ddd; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:0; }
+  .cell { position:relative; padding:22px; min-height:340px; overflow:hidden; }
+  .wpA { background:linear-gradient(180deg,#eceef0 0%,#e3e5e8 100%); }
+  .wpB { background-color:#e9ebed; background-image:radial-gradient(#ccd0d5 1.4px,transparent 1.4px); background-size:16px 16px; }
+  .wpC { background-color:#eaecee; background-image:linear-gradient(#d6d9dd 1px,transparent 1px),linear-gradient(90deg,#d6d9dd 1px,transparent 1px); background-size:24px 24px; }
+  .wpD { background-color:#e8eaec; background-image:repeating-linear-gradient(45deg,#dcdfe2 0 1px,transparent 1px 11px); }
+  .wpE { background:linear-gradient(180deg,#e9e6e1 0%,#e0ddd7 100%); }
+  .wpF { background-color:#e7e9eb; background-image:linear-gradient(135deg,#d9dce0 25%,transparent 25%),linear-gradient(225deg,#d9dce0 25%,transparent 25%),linear-gradient(45deg,#d9dce0 25%,transparent 25%),linear-gradient(315deg,#d9dce0 25%,#e7e9eb 25%); background-position:5px 0,5px 0,0 0,0 0; background-size:10px 10px; }
+  .tag { position:absolute; top:10px; left:10px; background:rgba(0,0,0,.72); color:#fff; font-size:12px; padding:3px 9px; border-radius:6px; letter-spacing:.02em; }
+  .hdr { background:var(--panel); border:1px solid var(--bd); border-radius:8px; padding:8px 12px; font-weight:700; font-size:.9rem; display:flex; align-items:center; gap:10px; margin:26px 0 12px; }
+  .btn { font-size:.72rem; font-weight:400; padding:4px 9px; border-radius:7px; border:1px solid var(--gold); background:var(--card); }
+  .row { display:flex; gap:10px; }
+  .vid { flex:1.4; background:#000; border-radius:8px; height:96px; }
+  .side { flex:1; display:flex; flex-direction:column; gap:8px; }
+  .card { background:var(--card); border:1px solid var(--bd); border-radius:8px; padding:8px 10px; font-size:.78rem; }
+  .card.sel { background:#2563c9; border-color:#1c4ea0; color:#fff; }
+</style>
+</head>
+<body>
+<div class="grid">
+  <div class="cell wpA"><span class="tag">A ソフト無地  #eceef0→#e3e5e8</span>
+    <div class="hdr">T33 Drive ビューア <span class="btn">☰ 記録</span></div>
+    <div class="row"><div class="vid"></div><div class="side"><div class="card sel">09:21:59 🎬 約100分</div><div class="card">14:00:00</div></div></div>
+  </div>
+  <div class="cell wpB"><span class="tag">B ドットグリッド</span>
+    <div class="hdr">T33 Drive ビューア <span class="btn">☰ 記録</span></div>
+    <div class="row"><div class="vid"></div><div class="side"><div class="card sel">09:21:59 🎬 約100分</div><div class="card">14:00:00</div></div></div>
+  </div>
+  <div class="cell wpC"><span class="tag">C 方眼(計器風)</span>
+    <div class="hdr">T33 Drive ビューア <span class="btn">☰ 記録</span></div>
+    <div class="row"><div class="vid"></div><div class="side"><div class="card sel">09:21:59 🎬 約100分</div><div class="card">14:00:00</div></div></div>
+  </div>
+  <div class="cell wpD"><span class="tag">D 斜めヘアライン</span>
+    <div class="hdr">T33 Drive ビューア <span class="btn">☰ 記録</span></div>
+    <div class="row"><div class="vid"></div><div class="side"><div class="card sel">09:21:59 🎬 約100分</div><div class="card">14:00:00</div></div></div>
+  </div>
+  <div class="cell wpE"><span class="tag">E 暖かみグレー無地(グレージュ)</span>
+    <div class="hdr">T33 Drive ビューア <span class="btn">☰ 記録</span></div>
+    <div class="row"><div class="vid"></div><div class="side"><div class="card sel">09:21:59 🎬 約100分</div><div class="card">14:00:00</div></div></div>
+  </div>
+  <div class="cell wpF"><span class="tag">F カーボン風(車テーマ)</span>
+    <div class="hdr">T33 Drive ビューア <span class="btn">☰ 記録</span></div>
+    <div class="row"><div class="vid"></div><div class="side"><div class="card sel">09:21:59 🎬 約100分</div><div class="card">14:00:00</div></div></div>
+  </div>
+</div>
+</body>
+</html>
