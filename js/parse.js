@@ -113,6 +113,18 @@ function classifyKind(name) {
   return null;
 }
 
+// 同名ファイルを1件に畳む（出現順は維持）。size が判る場合は大きい方を採り、
+// 送信途中で切れた不完全なコピーが残っても完全な方を選ぶ。
+function dedupeByName(items) {
+  const byName = new Map();
+  for (const item of items) {
+    const prev = byName.get(item.name);
+    if (!prev) { byName.set(item.name, item); continue; }
+    if (Number(item.size) > Number(prev.size)) byName.set(item.name, item);
+  }
+  return [...byName.values()];
+}
+
 export function groupSessions(files) {
   const map = new Map();
   for (const f of files) {
@@ -142,6 +154,10 @@ export function groupSessions(files) {
       map.get(stem)[kind] = f.id;
     }
   }
+  // 端末が同じセグメントを二重送信すると Drive に同名・別IDのファイルが並ぶ。
+  // そのまま持つと記録時間(本数×10分)が水増しされ、メタ無し再生では同じ区間を
+  // 二度流してしまうので、名前で1本に畳む（不完全なコピー対策で大きい方を残す）。
+  for (const s of map.values()) s.mp4s = dedupeByName(s.mp4s);
   return [...map.values()]
     .filter((s) => s.csv !== null)
     .sort((a, b) => (a.stem < b.stem ? 1 : a.stem > b.stem ? -1 : 0));
@@ -202,7 +218,10 @@ export function buildSegmentPlaylist(mp4s, meta) {
       const f = byName.get(seg.file);
       if (!f) continue;
       if (!segmentSizeOk(f)) continue; // 0バイト/極小の壊れたセグメントは載せない(416防止)
-      playlist.push({ id: f.id, name: f.name, baseOffsetSec: (seg.startMs - videoStartMs) / 1000 });
+      const item = { id: f.id, name: f.name, baseOffsetSec: (seg.startMs - videoStartMs) / 1000 };
+      // size は最終セグメントの長さ見積もり（グラフ横軸の終端）にも使う。
+      if (f.size != null) item.size = f.size;
+      playlist.push(item);
     }
     return playlist;
   }
@@ -210,7 +229,11 @@ export function buildSegmentPlaylist(mp4s, meta) {
   const sorted = [...files]
     .filter(segmentSizeOk) // メタ無しフォールバックでも壊れた 0バイトは除外する
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return sorted.map((f, i) => ({ id: f.id, name: f.name, baseOffsetSec: i === 0 ? 0 : null }));
+  return sorted.map((f, i) => {
+    const item = { id: f.id, name: f.name, baseOffsetSec: i === 0 ? 0 : null };
+    if (f.size != null) item.size = f.size;
+    return item;
+  });
 }
 
 // グローバル時刻(全体タイムラインの秒)から、対象セグメント index と

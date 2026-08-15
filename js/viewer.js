@@ -1,4 +1,5 @@
 import { hvLabel, segmentAtGlobalTime } from "./parse.js";
+import { computeTimeDomain } from "./timeline.js";
 import { createSessionLifecycle } from "./lifecycle.js";
 import { headingAt } from "./geo.js";
 
@@ -91,8 +92,28 @@ export function renderViewer(model, playback) {
       const cur = baseOffsets[currentSeg] == null ? 0 : baseOffsets[currentSeg];
       baseOffsets[next] = cur + video.duration;
     }
+    // 実測 duration で動画全体の終端を伸ばす。最終セグメントの長さは
+    // ここに来るまで判らないので、判った時点でグラフ横軸を引き直す。
+    if (Number.isFinite(video.duration)) {
+      const cur = baseOffsets[currentSeg] == null ? 0 : baseOffsets[currentSeg];
+      const end = cur + video.duration;
+      if (knownVideoEnd == null || end > knownVideoEnd) {
+        knownVideoEnd = end;
+        if (refreshDomain()) draw(globalTime());
+      }
+    }
     if (pendingSeek != null) { try { video.currentTime = pendingSeek; } catch { /* 範囲外は無視 */ } pendingSeek = null; }
-    if (pendingAutoplay) { video.play().catch(() => {}); pendingAutoplay = false; }
+    if (pendingAutoplay) {
+      // 自動再生をブラウザに拒否されると、次セグメントの先頭で静止したまま何も起きない。
+      // 握り潰すと利用者からは「10分ちょうどで止まった」としか見えず原因が追えないので、
+      // 何が起きたかと復帰方法を画面に出す（10分境界をまたぐ唯一の自動遷移点）。
+      video.play().catch((e) => {
+        document.getElementById("error").textContent =
+          `続きの再生がブラウザに止められました（${e && e.name ? e.name : "NotAllowedError"}）。` +
+          `再生ボタンを押すと ${currentSeg + 1} 本目から続きます。`;
+      });
+      pendingAutoplay = false;
+    }
   };
   video.onended = () => {
     // 次セグメントがあれば先頭から自動再生し、10分境界をまたいで連続再生する（H3）。
@@ -255,8 +276,21 @@ export function renderViewer(model, playback) {
   const cv = document.getElementById("graph");
   const PAD = { l: 46, r: 54, t: 26, b: 22 };
   const plot = () => ({ x: PAD.l, y: PAD.t, w: cv.width - PAD.l - PAD.r, h: cv.height - PAD.t - PAD.b });
-  const tMin = graph.length ? graph[0].t : 0;
-  const tMax = graph.length ? graph[graph.length - 1].t : 1;
+  // 横軸は CSV(OBD) ではなく「動画全体」を基準にする。OBD が動画より早く止まった
+  // セッションでも軸が途中で切れず、再生位置カーソルが軸外へ出ない。
+  // knownVideoEnd は loadedmetadata で実測できた「base + duration」の最大値。
+  let knownVideoEnd = null;
+  // baseOffsets は再生に伴って確定していく（メタ無しフォールバック）ので、
+  // 軸の算出には元の segments ではなく最新の baseOffsets を渡す。
+  const domainSegments = () => segments.map((s, i) => ({ baseOffsetSec: baseOffsets[i], size: s.size }));
+  let { tMin, tMax } = computeTimeDomain({ samples, track, segments: domainSegments(), knownEndSec: null });
+  // 実測で終端が伸びたら軸を更新する（最終セグメントは再生するまで長さが判らない）。
+  function refreshDomain() {
+    const d = computeTimeDomain({ samples, track, segments: domainSegments(), knownEndSec: knownVideoEnd });
+    if (d.tMin === tMin && d.tMax === tMax) return false;
+    tMin = d.tMin; tMax = d.tMax;
+    return true;
+  }
   const vmax = (key) => Math.max(1, ...graph.map((s) => s[key] || 0));
   const niceMax = (v) => {
     if (v <= 0) return 1;

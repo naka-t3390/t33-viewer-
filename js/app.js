@@ -4,6 +4,7 @@ import { findFolderId, listChildren, downloadText, downloadBlobUrl } from "./dri
 import { selectDateFolders, partitionDateChildren, groupSessions, buildViewModel, parseSegmentedMeta, buildSegmentPlaylist } from "./parse.js";
 import { renderViewer } from "./viewer.js";
 import { buildMediaUrl } from "./media-range.js";
+import { buildPlayback } from "./playback.js";
 import { createSessionPanel } from "./panel.js";
 
 const $ = (id) => document.getElementById(id);
@@ -113,24 +114,18 @@ async function openSession(s) {
     if (hasVideo) {
       const meta = parseSegmentedMeta(jsonText);
       const list = buildSegmentPlaylist(mp4s, meta); // [{id, name, baseOffsetSec}]
-      if (list.length > 0) {
-        const segments = list.map((x) => ({ baseOffsetSec: x.baseOffsetSec }));
-        if (swStreaming) {
-          await sendTokenToSW();          // token 受領を待ってから src を張る（H2）
-          if (seq !== opSeq) return;
-          // Range ストリーミング: セグメントの仮想URLを都度返す（全DLしない）。
-          playback = { segments, isBlob: false, resolveSrc: async (i) => buildMediaUrl(list[i].id) };
-        } else {
-          // 非SW フォールバック: 該当セグメントのみ blob として順次ダウンロードする。
-          playback = {
-            segments, isBlob: true,
-            resolveSrc: (i) => downloadBlobUrl(list[i].id, (loaded, total) => {
-              const pct = total ? Math.round((loaded / total) * 100) : null;
-              setStatus(`動画ダウンロード中… ${pct !== null ? pct + "%" : Math.round(loaded / 1e6) + "MB"}`);
-            }),
-          };
-        }
-      }
+      // src の解決は buildPlayback に閉じ込める。SW ストリーミングでは
+      // セグメントを解決するたびにトークンを渡し直す（SW はアイドルで停止され
+      // メモリ上のトークンを失うため、10分境界の切替が 401 になるのを防ぐ）。
+      playback = buildPlayback(list, {
+        swStreaming,
+        sendToken: sendTokenToSW,
+        buildMediaUrl,
+        downloadBlobUrl: (id) => downloadBlobUrl(id, (loaded, total) => {
+          const pct = total ? Math.round((loaded / total) * 100) : null;
+          setStatus(`動画ダウンロード中… ${pct !== null ? pct + "%" : Math.round(loaded / 1e6) + "MB"}`);
+        }),
+      });
     }
     const model = buildViewModel(csvText, kmlText, jsonText, hasVideo);
     renderViewer(model, playback);

@@ -167,6 +167,41 @@ test("groupSessions: mp4 の size があれば保持する(壊れたセグメン
   const s = groupSessions(seg)[0];
   assert.equal(s.mp4s[0].size, "1000");
 });
+test("groupSessions: Drive上の同名mp4(重複アップロード)は1本に畳む", () => {
+  // 端末が同じセグメントを二重送信すると、同名・別IDのファイルが Drive に並ぶ。
+  // そのまま数えると記録時間(本数×10分)が水増しされ、メタ無し再生でも同じ区間を二度流す。
+  const seg = [
+    { id: "s1a", name: "t33_20260620_101530_001.mp4", size: "1000" },
+    { id: "s1b", name: "t33_20260620_101530_001.mp4", size: "1000" },
+    { id: "s2", name: "t33_20260620_101530_002.mp4", size: "1000" },
+    { id: "sc", name: "t33_20260620_101530.csv" },
+  ];
+  const s = groupSessions(seg)[0];
+  assert.equal(s.mp4s.length, 2);
+  assert.deepEqual(s.mp4s.map((m) => m.name), [
+    "t33_20260620_101530_001.mp4",
+    "t33_20260620_101530_002.mp4",
+  ]);
+});
+test("groupSessions: 同名重複は大きい方(完全なほう)を残す", () => {
+  // 送信が途中で切れた不完全なコピーが混ざっている場合に備え、サイズの大きい方を採る。
+  const seg = [
+    { id: "small", name: "t33_20260620_101530_001.mp4", size: "10" },
+    { id: "big", name: "t33_20260620_101530_001.mp4", size: "2000" },
+    { id: "sc", name: "t33_20260620_101530.csv" },
+  ];
+  const s = groupSessions(seg)[0];
+  assert.equal(s.mp4s.length, 1);
+  assert.equal(s.mp4s[0].id, "big");
+});
+test("sessionCardMeta: 重複を畳んだ本数で記録時間を出す", () => {
+  const seg = [
+    { id: "s1a", name: "t33_20260620_101530_001.mp4" },
+    { id: "s1b", name: "t33_20260620_101530_001.mp4" },
+    { id: "sc", name: "t33_20260620_101530.csv" },
+  ];
+  assert.equal(sessionCardMeta(groupSessions(seg)[0]).approxMin, 10);
+});
 test("groupSessions: 表示ラベル", () => {
   const s = groupSessions(FILES)[0];
   assert.equal(s.dateLabel, "2026-06-20");
