@@ -277,9 +277,19 @@ export function renderViewer(model, playback) {
       // クリック点から CLICK_RADIUS_PX だけ横の点を緯度経度へ戻し、実距離に換算する。
       const edge = lmap.unproject([e.point.x + CLICK_RADIUS_PX, e.point.y]);
       const radiusM = distanceMeters(e.lngLat.lat, e.lngLat.lng, edge.lat, edge.lng);
+      const now = globalTime();
       const j = nearestPassIndex(
-        track, { lat: e.lngLat.lat, lon: e.lngLat.lng }, radiusM, globalTime()
+        track, { lat: e.lngLat.lat, lon: e.lngLat.lng }, radiusM, now
       );
+      // TODO(調査用・原因が判ったら削除): 2回目以降のクリックが効かない件の切り分け。
+      // どこで落ちているか(半径外 / 飛び先が今と同じ / セグメント切替)を画面に出す。
+      const st = document.getElementById("status");
+      if (st) {
+        st.textContent = j < 0
+          ? `地図クリック: 半径外 (r=${Math.round(radiusM)}m)`
+          : `地図クリック: j=${j} 飛び先=${track[j].t.toFixed(1)}s 現在=${now.toFixed(1)}s ` +
+            `seg=${currentSeg} r=${Math.round(radiusM)}m`;
+      }
       if (j >= 0) seekToGlobal(track[j].t);
     });
     // 軌跡の上ではカーソルを指マークにして、押せることを示す。
