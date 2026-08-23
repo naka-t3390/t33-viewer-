@@ -105,14 +105,24 @@ export function hvLabel(hvState) {
 
 const SESSION_RE = /^t33_(\d{8})_(\d{6})/;
 
+// 走行CSVは「スタンプ + .csv」ちょうどこの形だけ。サフィックスの付いた CSV は別物である。
+const DRIVE_CSV_RE = /^t33_\d{8}_\d{6}\.csv$/;
+
 function classifyKind(name) {
   if (name.endsWith("_video.json")) return "json";
-  // CAN 生ログ(t33_..._can.csv)は走行CSVと同じセッションフォルダに並ぶが、列も用途も別物。
-  // 拡張子だけで判定すると、Drive の列挙順(不定)しだいで走行CSVを上書きしてしまう
-  // ―― 2026-08-15 の 14:34 セッションで、ヘッダだけの CAN ログを走行CSVとして読み
-  // 「CSV にデータ行がありません」になった。ここで明示的に除外する。
-  if (name.endsWith("_can.csv")) return null;
-  if (name.endsWith(".csv")) return "csv";
+  // 走行CSVと同じセッションフォルダには、列も用途も違う CSV が何本も並ぶ
+  // (_can.csv / _pid.csv / _canmark.csv …)。拡張子だけで判定すると、Drive の
+  // 列挙順(不定)しだいでそれらが走行CSVを上書きしてしまう。
+  //
+  // 2026-08-15: ヘッダだけの _can.csv を走行CSVとして読み「CSV にデータ行がありません」。
+  //   このとき _can.csv を名指しで除外したが、除外リスト方式では**次に増えたファイルで
+  //   また踏む**。
+  // 2026-08-23: 実際に踏んだ。後から増えていた _pid.csv(PID 応答ログ)が 09:22:09 の
+  //   走行CSVを上書きし、速度も回転も出ない空のグラフになった。
+  //
+  // そこで除外リストをやめ、**走行CSVの名前そのもの**を積極的に判定する。
+  // 今後どんなサフィックス付き CSV が増えても、ここは黙って正しく無視する。
+  if (name.endsWith(".csv")) return DRIVE_CSV_RE.test(name) ? "csv" : null;
   if (name.endsWith(".kml")) return "kml";
   if (name.endsWith(".mp4")) return "mp4";
   return null;

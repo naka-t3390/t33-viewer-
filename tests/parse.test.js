@@ -217,6 +217,52 @@ test("groupSessions: _can.csv が先に来ても走行CSVを採る", () => {
   ];
   assert.equal(groupSessions(files)[0].csv, "run");
 });
+// 2026-08-23 の再発。_can.csv を名指しで除外していたが、その後 _pid.csv(PID 応答ログ)が
+// 増えており、Drive の列挙順しだいで走行CSVを上書きしていた。09:22:09 のセッションで
+// 速度も回転も出ない空のグラフになったのがこれ。除外リストではなく走行CSVの名前を
+// 積極的に判定するようにしたので、サフィックス付きの CSV は種類を問わず無視される。
+test("groupSessions: _pid.csv は走行CSVを上書きしない(後に来ても)", () => {
+  const s = groupSessions([
+    { id: "drive", name: "t33_20260823_092209.csv" },
+    { id: "pid", name: "t33_20260823_092209_pid.csv" },
+  ]);
+  assert.equal(s.length, 1);
+  assert.equal(s[0].csv, "drive");
+});
+
+test("groupSessions: _pid.csv が先に来ても走行CSVを採る", () => {
+  const s = groupSessions([
+    { id: "pid", name: "t33_20260823_092209_pid.csv" },
+    { id: "drive", name: "t33_20260823_092209.csv" },
+  ]);
+  assert.equal(s[0].csv, "drive");
+});
+
+test("groupSessions: _canmark.csv も走行CSVを上書きしない", () => {
+  const s = groupSessions([
+    { id: "drive", name: "t33_20260823_100120.csv" },
+    { id: "mark", name: "t33_20260823_100120_canmark.csv" },
+  ]);
+  assert.equal(s[0].csv, "drive");
+});
+
+// 除外リスト方式に戻すと、また同じ形で踏む。まだ存在しないサフィックスでも
+// 無視されることを固定しておく(CAN ログの gzip 化で _can.csv.gz が増える予定)。
+test("groupSessions: 未知のサフィックス付き CSV も走行CSVを上書きしない", () => {
+  const s = groupSessions([
+    { id: "drive", name: "t33_20260823_092209.csv" },
+    { id: "future", name: "t33_20260823_092209_somethingnew.csv" },
+  ]);
+  assert.equal(s[0].csv, "drive");
+});
+
+test("groupSessions: サフィックス付き CSV しか無いセッションは一覧に出さない", () => {
+  const s = groupSessions([
+    { id: "pid", name: "t33_20260823_092209_pid.csv" },
+  ]);
+  assert.equal(s.length, 0);
+});
+
 test("groupSessions: _can.csv しか無いセッションは一覧に出さない", () => {
   const files = [{ id: "can", name: "t33_20260815_143450_can.csv" }];
   assert.deepEqual(groupSessions(files), []);
