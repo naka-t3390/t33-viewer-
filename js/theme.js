@@ -22,9 +22,9 @@ export function getThemeColors() {
     speed: dark ? "#00e5ff" : "#2563c9",
     rpm: dark ? "#ff9800" : "#c2710c",
     cursor: dark ? "#ff3d00" : "#d64545",
-    track: dark ? "#00e5ff" : "#2563c9",
+    track: dark ? "#1d4ed8" : "#2563c9",
     mapStyle: dark
-      ? "https://tiles.openfreemap.org/styles/dark"
+      ? "https://tiles.openfreemap.org/styles/positron"
       : "https://tiles.openfreemap.org/styles/liberty",
   };
 }
