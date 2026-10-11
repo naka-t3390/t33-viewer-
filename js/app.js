@@ -1,3 +1,4 @@
+import { initTheme } from "./theme.js";
 import { CONFIG } from "./config.js";
 import { initAuth, signIn, onTokenExpired, getToken, isGranted, silentSignIn, onTokenRefreshed } from "./auth.js";
 import { findFolderId, listChildren, downloadText, downloadBlobUrl } from "./drive.js";
@@ -191,6 +192,7 @@ async function tryAutoSignIn() {
   await loadDates();
 }
 
+initTheme();
 setupServiceWorker();
 whenGisReady(() => {
   wire();

@@ -1,3 +1,4 @@
+import { getThemeColors, onThemeChange } from "./theme.js";
 import { hvLabel, segmentAtGlobalTime } from "./parse.js";
 import { computeTimeDomain } from "./timeline.js";
 import { createSessionLifecycle } from "./lifecycle.js";
@@ -42,6 +43,11 @@ function nearest(arr, t) {
 // セッション再描画ごとの使い捨てリソース(マップ/RAFループ/resizeリスナ)を
 // 一元管理する。前回分を必ず破棄してから作り直すので、再描画しても
 // 「already initialized」やループ/リスナの多重化が起きない。
+let currentThemeCallback = null;
+onThemeChange((colors) => {
+  if (currentThemeCallback) currentThemeCallback(colors);
+});
+
 const lifecycle = createSessionLifecycle({
   win: window,
   raf: (cb) => requestAnimationFrame(cb),
@@ -173,27 +179,37 @@ export function renderViewer(model, playback) {
       new maplibregl.LngLatBounds(lnglats[0], lnglats[0])
     );
     // 前回マップを破棄してから新規生成。ベクタータイルなので回転しても文字は常に正立。
+    const initialColors = getThemeColors();
     lmap = lifecycle.replaceMap(() => new maplibregl.Map({
       container: mapEl,
-      style: "https://tiles.openfreemap.org/styles/liberty",
+      style: initialColors.mapStyle,
       bounds,
       fitBoundsOptions: { padding: 24 },
       attributionControl: { compact: true },
     }));
     lmap.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
     lmap.addControl(new maplibregl.ScaleControl({ unit: "metric" }));
-    // 軌跡はスタイル読込完了後にレイヤ追加する(load 前の addSource はエラー)。
-    lmap.on("load", () => {
-      lmap.addSource("track", {
-        type: "geojson",
-        data: { type: "Feature", properties: {},
-                geometry: { type: "LineString", coordinates: lnglats } },
-      });
-      lmap.addLayer({
-        id: "track-line", type: "line", source: "track",
-        paint: { "line-color": "#2563c9", "line-width": 4 },
-      });
-    });
+
+    function updateTrackLayer() {
+      if (!lmap || !lmap.isStyleLoaded()) return;
+      if (!lmap.getSource("track")) {
+        lmap.addSource("track", {
+          type: "geojson",
+          data: { type: "Feature", properties: {},
+                  geometry: { type: "LineString", coordinates: lnglats } },
+        });
+      }
+      if (!lmap.getLayer("track-line")) {
+        lmap.addLayer({
+          id: "track-line", type: "line", source: "track",
+          paint: { "line-color": getThemeColors().track, "line-width": 4 },
+        });
+      } else {
+        lmap.setPaintProperty("track-line", "line-color", getThemeColors().track);
+      }
+    }
+    lmap.on("load", updateTrackLayer);
+    lmap.on("style.load", updateTrackLayer);
     // 自車マーカー(DOM要素。見た目は CSS .car-marker)
     const carEl = document.createElement("div");
     carEl.className = "car-marker";
@@ -323,23 +339,24 @@ export function renderViewer(model, playback) {
 
   function drawFrame(P) {
     const ctx = cv.getContext("2d");
+    const colors = getThemeColors();
     ctx.font = "11px -apple-system,'Hiragino Sans',sans-serif";
     ctx.lineWidth = 1;
-    ctx.strokeStyle = "#e7dfce";
+    ctx.strokeStyle = colors.grid;
     for (let i = 0; i <= 4; i++) { const y = P.y + P.h * i / 4; ctx.beginPath(); ctx.moveTo(P.x, y); ctx.lineTo(P.x + P.w, y); ctx.stroke(); }
-    ctx.fillStyle = "#877c69"; ctx.textAlign = "center"; ctx.textBaseline = "top";
+    ctx.fillStyle = colors.textMuted; ctx.textAlign = "center"; ctx.textBaseline = "top";
     for (let i = 0; i <= 4; i++) {
       const t = tMin + (tMax - tMin) * i / 4, x = P.x + P.w * i / 4;
-      ctx.strokeStyle = "#e7dfce"; ctx.beginPath(); ctx.moveTo(x, P.y); ctx.lineTo(x, P.y + P.h); ctx.stroke();
+      ctx.strokeStyle = colors.grid; ctx.beginPath(); ctx.moveTo(x, P.y); ctx.lineTo(x, P.y + P.h); ctx.stroke();
       ctx.fillText(mmss(t), x, P.y + P.h + 4);
     }
-    ctx.fillStyle = "#2563c9"; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    ctx.fillStyle = colors.speed; ctx.textAlign = "right"; ctx.textBaseline = "middle";
     for (let i = 0; i <= 2; i++) { const y = P.y + P.h - P.h * i / 2; ctx.fillText(String(Math.round(speedAxis * i / 2)), P.x - 6, y); }
-    ctx.fillStyle = "#c2710c"; ctx.textAlign = "left";
+    ctx.fillStyle = colors.rpm; ctx.textAlign = "left";
     for (let i = 0; i <= 2; i++) { const y = P.y + P.h - P.h * i / 2; ctx.fillText(String(Math.round(rpmAxis * i / 2)), P.x + P.w + 6, y); }
     ctx.textBaseline = "middle"; ctx.textAlign = "left";
-    ctx.fillStyle = "#2563c9"; ctx.fillRect(P.x, 12, 14, 3); ctx.fillText("速度 (km/h)", P.x + 18, 13);
-    ctx.fillStyle = "#c2710c"; ctx.fillRect(P.x + 130, 12, 14, 3); ctx.fillText("RPM", P.x + 148, 13);
+    ctx.fillStyle = colors.speed; ctx.fillRect(P.x, 12, 14, 3); ctx.fillText("速度 (km/h)", P.x + 18, 13);
+    ctx.fillStyle = colors.rpm; ctx.fillRect(P.x + 130, 12, 14, 3); ctx.fillText("RPM", P.x + 148, 13);
   }
   function line(key, max, color, P) {
     const ctx = cv.getContext("2d");
@@ -353,11 +370,20 @@ export function renderViewer(model, playback) {
   }
   function draw(t) {
     const ctx = cv.getContext("2d"); ctx.clearRect(0, 0, cv.width, cv.height);
-    const P = plot(); drawFrame(P);
-    line("speed", speedAxis, "#2563c9", P); line("rpm", rpmAxis, "#c2710c", P);
+    const P = plot();
+    const colors = getThemeColors();
+    drawFrame(P);
+    line("speed", speedAxis, colors.speed, P);
+    line("rpm", rpmAxis, colors.rpm, P);
     const x = xAt(t, P);
-    ctx.strokeStyle = "#d64545"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, P.y); ctx.lineTo(x, P.y + P.h); ctx.stroke();
+    ctx.strokeStyle = colors.cursor; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, P.y); ctx.lineTo(x, P.y + P.h); ctx.stroke();
   }
+  currentThemeCallback = (colors) => {
+    if (lmap) {
+      lmap.setStyle(colors.mapStyle);
+    }
+    draw(globalTime());
+  };
   function fit() { cv.width = cv.clientWidth; cv.height = cv.clientHeight; if (lmap) lmap.resize(); draw(globalTime()); }
 
   const fmt = (v) => (v == null ? "--" : Math.round(v * 10) / 10);
