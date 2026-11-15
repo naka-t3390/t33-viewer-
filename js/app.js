@@ -2,7 +2,7 @@ import { initTheme } from "./theme.js";
 import { CONFIG } from "./config.js";
 import { initAuth, signIn, onTokenExpired, getToken, isGranted, silentSignIn, onTokenRefreshed } from "./auth.js";
 import { findFolderId, listChildren, downloadText, downloadBlobUrl } from "./drive.js";
-import { selectDateFolders, partitionDateChildren, groupSessions, buildViewModel, parseSegmentedMeta, buildSegmentPlaylist, csvDurationSec } from "./parse.js";
+import { selectDateFolders, partitionDateChildren, groupSessions, buildViewModel, parseSegmentedMeta, buildSegmentPlaylist, csvDurationSec, filterSessionsByDuration } from "./parse.js";
 import { renderViewer } from "./viewer.js";
 import { buildMediaUrl } from "./media-range.js";
 import { buildPlayback } from "./playback.js";
@@ -92,22 +92,26 @@ async function fetchSessionsForDate(d) {
     files = files.concat(await listChildren(tf.id));
   }
   const sessions = groupSessions(files);
-  fillDurations(sessions); // 一覧の表示は待たせない(届いた順にカードへ反映)
-  return sessions;
+  const durationByStem = await fillDurations(sessions);
+  return filterSessionsByDuration(sessions, durationByStem);
 }
 
 // 各セッションの実記録時間を CSV から求めてカードへ流し込む。
 // 動画セグメント数からの推定はしない ―― 2026-08-15 の走行では実記録 1分50秒 の
 // セッションが「約10分」と表示され、記録の区切りが読み取れなかった。
 async function fillDurations(sessions) {
+  const durationByStem = new Map();
   await Promise.all(sessions.map(async (s) => {
     try {
-      panel.setDuration(s.stem, csvDurationSec(await downloadText(s.csv)));
+      const sec = csvDurationSec(await downloadText(s.csv));
+      durationByStem.set(s.stem, sec);
+      panel.setDuration(s.stem, sec);
     } catch (e) {
       // 長さが出ないだけで一覧も再生も成り立つ。全体を止める理由にはしない。
       console.warn(`記録時間を取得できません: ${s.stem}`, e);
     }
   }));
+  return durationByStem;
 }
 
 // 時刻セッションを開く（描画は既存のまま。パネルのカード選択から呼ばれる）

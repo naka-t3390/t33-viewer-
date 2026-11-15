@@ -377,3 +377,19 @@ export function sessionCardMeta(session, durationSec = null) {
     durationLabel: formatDuration(durationSec),
   };
 }
+
+/** 一覧に表示するセッションの最小記録時間（秒）。1分未満の短い記録は除外する。 */
+export const MIN_SESSION_DURATION_SEC = 60;
+
+/**
+ * 記録時間が [minSec] 未満のセッションを除外する。
+ *
+ * 記録時間が取得できなかった（null / undefined）セッションは誤って隠さないよう残す。
+ */
+export function filterSessionsByDuration(sessions, durationByStem, minSec = MIN_SESSION_DURATION_SEC) {
+  return sessions.filter((s) => {
+    const sec = durationByStem.get(s.stem);
+    if (typeof sec !== "number" || !Number.isFinite(sec)) return true;
+    return sec >= minSec;
+  });
+}

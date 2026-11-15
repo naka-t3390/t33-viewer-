@@ -8,7 +8,7 @@ import { hvLabel } from "../js/parse.js";
 import { groupSessions } from "../js/parse.js";
 import { buildViewModel } from "../js/parse.js";
 import { selectDateFolders, partitionDateChildren } from "../js/parse.js";
-import { sessionCardMeta, csvDurationSec, formatDuration } from "../js/parse.js";
+import { sessionCardMeta, csvDurationSec, formatDuration, filterSessionsByDuration, MIN_SESSION_DURATION_SEC } from "../js/parse.js";
 
 // sessionCardMeta: サイドパネルのカード表示用メタ(時刻・動画有無・記録時間)
 // 記録時間は CSV の実測(秒)を外から渡す。動画セグメント数からの推定はしない
@@ -410,4 +410,28 @@ test("partitionDateChildren: 全ファイル/全フォルダ/空", () => {
   assert.deepEqual(partitionDateChildren(allFiles), { timeFolders: [], directFiles: allFiles });
   const allFolders = [{ id: "d", name: "120000", mimeType: FOLDER }];
   assert.deepEqual(partitionDateChildren(allFolders), { timeFolders: allFolders, directFiles: [] });
+});
+
+test("filterSessionsByDuration: 60秒未満を除外し、60秒以上と未取得(null)は残す", () => {
+  assert.equal(MIN_SESSION_DURATION_SEC, 60);
+  const sessions = [
+    { stem: "short_0s" },
+    { stem: "short_59s" },
+    { stem: "just_60s" },
+    { stem: "long_120s" },
+    { stem: "unknown_null" },
+    { stem: "missing_entry" },
+  ];
+  const durations = new Map([
+    ["short_0s", 0],
+    ["short_59s", 59],
+    ["just_60s", 60],
+    ["long_120s", 120],
+    ["unknown_null", null],
+  ]);
+  const out = filterSessionsByDuration(sessions, durations);
+  assert.deepEqual(
+    out.map((s) => s.stem),
+    ["just_60s", "long_120s", "unknown_null", "missing_entry"]
+  );
 });
