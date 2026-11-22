@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bearingDeg, distanceMeters, headingAt, nearestPassTime, segmentDistance } from "../js/geo.js";
+import { bearingDeg, distanceMeters, headingAt, nearestPassTime } from "../js/geo.js";
 
 // 方位角: 0=北, 90=東, 180=南, 270=西。緯度経度差から方向を検証する。
 test("bearingDeg: 真北へ移動すると約0度", () => {
@@ -30,27 +30,6 @@ test("distanceMeters: 同一点は0", () => {
 test("distanceMeters: 緯度0.001度差は約111m", () => {
   const d = distanceMeters(35.0, 139.0, 35.001, 139.0);
   assert.ok(Math.abs(d - 111) < 3, `got ${d}`);
-});
-
-// segmentDistance: 点から線分までの最短距離(m)と線分上の位置比。
-// 軌跡のクリック判定と、表示用補正(geo-correct.js)の Douglas-Peucker が共有する。
-test("segmentDistance: 線分の真ん中の横にある点は、距離が垂線・比が0.5", () => {
-  // 緯度35°で 経度0.0001度 ≈ 9.1m、緯度0.0001度 ≈ 11.1m。
-  const r = segmentDistance(35.0001, 139.0001, 35.0, 139.0, 35.0, 139.0002);
-  assert.ok(Math.abs(r.distance - 11.1) < 0.3, `distance=${r.distance}`);
-  assert.ok(Math.abs(r.ratio - 0.5) < 0.01, `ratio=${r.ratio}`);
-});
-test("segmentDistance: 線分の外側にある点は端点までの距離になり比が0または1", () => {
-  const before = segmentDistance(35.0, 138.9999, 35.0, 139.0, 35.0, 139.0002);
-  assert.equal(before.ratio, 0);
-  assert.ok(Math.abs(before.distance - 9.1) < 0.3, `distance=${before.distance}`);
-  const after = segmentDistance(35.0, 139.0003, 35.0, 139.0, 35.0, 139.0002);
-  assert.equal(after.ratio, 1);
-});
-test("segmentDistance: 長さ0の線分(停車中の同一座標)は端点そのものとして扱う", () => {
-  const r = segmentDistance(35.0001, 139.0, 35.0, 139.0, 35.0, 139.0);
-  assert.equal(r.ratio, 0);
-  assert.ok(Math.abs(r.distance - 11.1) < 0.3, `distance=${r.distance}`);
 });
 
 // headingAt: track[index] 時点の進行方向。停車中(閾値未満の移動)は null を返し、

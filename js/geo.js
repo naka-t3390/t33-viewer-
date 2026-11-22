@@ -39,11 +39,8 @@ const M_PER_DEG = (Math.PI * EARTH_RADIUS_M) / 180;
  *
  * 数十メートルの範囲しか見ないので、点を原点とする局所平面へ近似する
  * (経度方向は緯度で縮む分を cos で補正)。
- *
- * 表示用の軌跡補正(geo-correct.js)でも、Douglas-Peucker の「線からの外れ具合」を
- * 測るのに同じ計算を使うため export する。
  */
-export function segmentDistance(pLat, pLon, aLat, aLon, bLat, bLon) {
+function segmentDistance(pLat, pLon, aLat, aLon, bLat, bLon) {
   const k = Math.cos(toRad(pLat));
   const ax = (aLon - pLon) * k * M_PER_DEG, ay = (aLat - pLat) * M_PER_DEG;
   const bx = (bLon - pLon) * k * M_PER_DEG, by = (bLat - pLat) * M_PER_DEG;

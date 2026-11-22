@@ -120,9 +120,9 @@ canvas#graph { width:100%; height:42vh; display:block; background:var(--card-bg)
 
 .fit-btn { font:inherit; font-size:.85rem; padding:5px 10px; border-radius:8px; border:1px solid var(--border-accent); background:var(--btn-bg); color:var(--text); cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,.2); }
 .fit-btn:hover { background:var(--btn-hover); }
-/* トグル(ヘッドアップ / 軌跡の補正)が有効なときのボタン強調 */
-.headup-btn.active, .trackfix-btn.active { background:var(--active-bg); border-color:var(--active-border); color:var(--active-text); }
-.headup-btn.active:hover, .trackfix-btn.active:hover { background:var(--active-border); }
+/* ヘッドアップ(進行方向を上)が有効なときのトグルボタン強調 */
+.headup-btn.active { background:var(--active-bg); border-color:var(--active-border); color:var(--active-text); }
+.headup-btn.active:hover { background:var(--active-border); }
 .nomap { display:none; }
 .hidden { display:none; }
 
