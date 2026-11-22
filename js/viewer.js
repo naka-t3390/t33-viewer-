@@ -3,7 +3,8 @@ import { hvLabel, segmentAtGlobalTime } from "./parse.js";
 import { computeTimeDomain } from "./timeline.js";
 import { createSessionLifecycle } from "./lifecycle.js";
 import { headingAt, distanceMeters, nearestPassTime } from "./geo.js";
-import { correctTrack, readTrackFix, writeTrackFix } from "./geo-correct.js";
+import { correctTrack, readTrackMode, writeTrackMode, nextTrackMode } from "./geo-correct.js";
+import { resolveTilesTemplate, snapTrackToRoads } from "./map-match.js";
 
 // 非SW フォールバック時の blob URL。次セグメント読込・セッション切替の前に解放する。
 let activeObjectUrl = null;
@@ -55,7 +56,12 @@ const lifecycle = createSessionLifecycle({
   caf: (id) => cancelAnimationFrame(id),
 });
 
+// セッションを描くたびに増える。道への吸着はタイル取得を待つ非同期処理なので、
+// 結果が返ったときに「まだこのセッションを見ているか」をこれで確かめる。
+let renderGeneration = 0;
+
 export function renderViewer(model, playback) {
+  const myGeneration = ++renderGeneration;
   const { samples, graph, track, warnings } = model;
   const times = samples.map((s) => s.t);
   const video = document.getElementById("video");
@@ -169,10 +175,15 @@ export function renderViewer(model, playback) {
   // 描画の直前にだけ平滑化を通す。model.track（KML 由来の原本）は読むだけで変更しない。
   // 補正後も各点が元の t を保つので、クリック→シークは補正後の線でもそのまま動く。
   const fixedTrack = correctTrack(track);
+  // さらに道路形状へ吸着させたもの。ベクタータイルの取得を待つので後から入る。
+  let matchedTrack = null;
   const trackFixStorage = (typeof localStorage === "undefined") ? null : localStorage;
-  let trackFixOn = readTrackFix(trackFixStorage);
+  let trackMode = readTrackMode(trackFixStorage); // "match" | "fix" | "raw"
+  // モードから実際に表示する軌跡を選ぶ。吸着がまだ/失敗なら段階1 の補正で代用する。
+  const trackForMode = (m) =>
+    m === "raw" ? track : (m === "match" && matchedTrack) ? matchedTrack : fixedTrack;
   // 線の描画・自車マーカー・進行方向・クリック判定は、すべてこの viewTrack を見る。
-  let viewTrack = trackFixOn ? fixedTrack : track;
+  let viewTrack = trackForMode(trackMode);
   let trackTimes = viewTrack.map((p) => p.t);
   let lmap = null, lmarker = null;
   // ヘッドアップ(進行方向を上)表示の状態。update()/fit() から参照するため外側で保持する。
@@ -275,9 +286,18 @@ export function renderViewer(model, playback) {
     headBtn.type = "button";
     headBtn.className = "fit-btn headup-btn";
     headBtn.textContent = HeadLabel; // 押すとヘッドアップへ。既定はノースアップ。
-    // 軌跡の補正トグル。ラベルは「押すと何が起きるか」(他の2つと同じ作法)。
-    const FixLabel = "〜 軌跡を補正";
-    const RawLabel = "〜 生データを表示";
+    // 軌跡の表示モード(道に吸着 → 補正のみ → 生データ の巡回)。
+    // ラベルは「押すと何になるか」(他の2つと同じ作法)。
+    const MODE_LABEL = {
+      match: "〜 道に吸着",
+      fix: "〜 補正のみ",
+      raw: "〜 生データを表示",
+    };
+    const MODE_TITLE = {
+      match: "GPS の軌跡を道路形状へ吸着させて表示している(元データは変更していない)",
+      fix: "停車の団子と測位ノイズだけを畳んで表示している",
+      raw: "GPS の生データをそのまま表示している",
+    };
     const fixBtn = document.createElement("button");
     fixBtn.type = "button";
     fixBtn.className = "fit-btn trackfix-btn";
@@ -308,20 +328,35 @@ export function renderViewer(model, playback) {
       applyHeadUp(globalTime());
     });
 
-    // --- 軌跡の補正 ON/OFF ---
-    // 見た目だけを差し替える。model.track（原本）はどちらのモードでも変わらない。
-    function applyTrackFix(on) {
-      trackFixOn = on;
-      viewTrack = on ? fixedTrack : track;
+    // --- 軌跡の表示モード(道に吸着 / 補正のみ / 生データ) ---
+    // 見た目だけを差し替える。model.track（原本）はどのモードでも変わらない。
+    let matchRequested = false;
+
+    // 道路形状はベクタータイルから取る。地図が使っているのと同じタイルなので、
+    // 外へ出る情報は増えない(走行位置は送らない)。失敗したら黙って段階1 のまま。
+    async function ensureMatchedTrack() {
+      if (matchRequested || matchedTrack) return;
+      if (!lmap || !lmap.isStyleLoaded()) return; // スタイル読込後に load から呼び直される
+      matchRequested = true;
+      const tilesTemplate = await resolveTilesTemplate(lmap.getSource("openmaptiles"));
+      if (!tilesTemplate || myGeneration !== renderGeneration) return;
+      const snapped = await snapTrackToRoads(fixedTrack, { tilesTemplate });
+      // 待っている間に別セッションへ切り替わっていたら、その結果は捨てる。
+      if (!snapped || myGeneration !== renderGeneration) return;
+      matchedTrack = snapped;
+      if (trackMode === "match") applyTrackMode("match");
+    }
+
+    function applyTrackMode(mode) {
+      trackMode = mode;
+      viewTrack = trackForMode(mode);
       trackTimes = viewTrack.map((p) => p.t);
       lnglats = viewTrack.map((p) => [p.lon, p.lat]);
       bounds = boundsOf(lnglats);
       updateTrackLayer();
-      fixBtn.classList.toggle("active", on);
-      fixBtn.textContent = on ? RawLabel : FixLabel;
-      fixBtn.title = on
-        ? "GPS の生データ（補正なし）に戻す"
-        : "停車の団子と測位ノイズのギザギザを畳んで表示する";
+      fixBtn.classList.toggle("active", mode !== "raw");
+      fixBtn.textContent = MODE_LABEL[nextTrackMode(mode)];
+      fixBtn.title = MODE_TITLE[mode];
       // 自車マーカーと追従カメラを、差し替えた軌跡の上へ即座に置き直す。
       const t = globalTime();
       const j = nearest(trackTimes, t);
@@ -329,12 +364,16 @@ export function renderViewer(model, playback) {
       lastAppliedJ = null;        // 適用済み状態を捨てて必ず再適用させる
       lastAppliedBearing = null;
       applyMapView(t);
+      if (mode === "match") ensureMatchedTrack();
     }
-    applyTrackFix(trackFixOn); // 既定はオン（保存された設定があればそれに従う）
+    applyTrackMode(trackMode); // 既定は match（保存された設定があればそれに従う）
     fixBtn.addEventListener("click", () => {
-      applyTrackFix(!trackFixOn);
-      writeTrackFix(trackFixStorage, trackFixOn);
+      const next = nextTrackMode(trackMode);
+      applyTrackMode(next);
+      writeTrackMode(trackFixStorage, next);
     });
+    // スタイルが読めた時点で道路データを取りに行く(生成直後はまだ source が無い)。
+    lmap.on("load", () => { if (trackMode === "match") ensureMatchedTrack(); });
 
     // --- 軌跡のクリックで、その地点を通った時刻へ動画を飛ばす ---
     // 許容範囲は画面上のピクセルで決める。メートルで固定すると、広域表示では
