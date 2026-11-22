@@ -15,6 +15,7 @@
   <h1>T33 本番レイアウト検証</h1>
   <button id="panel-toggle" type="button">☰ 記録</button>
   <button id="s1">セッション1描画(広域)</button>
+  <button id="s2">セッション2描画(測位ノイズ+停車)</button>
   <span id="status"></span>
 </header>
 <div class="layout">
@@ -63,12 +64,32 @@ function mkModel() {
   }
   return { samples, graph, track, warnings: [] };
 }
+// 軌跡補正の検証用: 実測に近い測位ノイズを乗せ、途中で60秒停車する(団子ができる)。
+function mkNoisyModel() {
+  const samples = [], graph = [], track = [];
+  const lat0 = 35.681, lon0 = 140.02;
+  let lat = lat0, lon = lon0, t = 0;
+  const noise = (i) => ({ dlat: 0.00002 * Math.sin(i * 2.3), dlon: 0.00002 * Math.cos(i * 1.7) });
+  const push = (speed) => {
+    const n = noise(t);
+    samples.push({ t, speed, rpm: 1000 + speed * 20, coolant: 80, throttle: speed / 2, hv_state: 1 });
+    graph.push({ t, speed, rpm: 1000 + speed * 20 });
+    track.push({ t, lat: lat + n.dlat, lon: lon + n.dlon });
+    t++;
+  };
+  for (let i = 0; i < 60; i++) { push(36); lat -= 0.00009; }           // 走行
+  for (let i = 0; i < 60; i++) { push(0); }                            // 停車(同じ場所で揺れる)
+  for (let i = 0; i < 60; i++) { push(36); lon -= 0.00011; }           // 右折して走行
+  return { samples, graph, track, warnings: [] };
+}
 const M = mkModel();
+const MN = mkNoisyModel();
 const video = document.getElementById("video");
 Object.defineProperty(video, "videoWidth", { get: () => 0 });
 Object.defineProperty(video, "videoHeight", { get: () => 0 });
 const status = document.getElementById("status");
 document.getElementById("s1").onclick = () => { renderViewer(M, null); status.textContent = "描画完了(広域トラック)"; };
+document.getElementById("s2").onclick = () => { renderViewer(MN, null); status.textContent = "描画完了(測位ノイズ+停車)"; };
 
 // --- サイドパネル検証: モック日付2日×セッション計3件で本番と同じ結線を再現する ---
 import { createSessionPanel } from "./js/panel.js";

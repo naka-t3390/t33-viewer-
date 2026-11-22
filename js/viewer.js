@@ -3,6 +3,7 @@ import { hvLabel, segmentAtGlobalTime } from "./parse.js";
 import { computeTimeDomain } from "./timeline.js";
 import { createSessionLifecycle } from "./lifecycle.js";
 import { headingAt, distanceMeters, nearestPassTime } from "./geo.js";
+import { correctTrack, readTrackFix, writeTrackFix } from "./geo-correct.js";
 
 // 非SW フォールバック時の blob URL。次セグメント読込・セッション切替の前に解放する。
 let activeObjectUrl = null;
@@ -163,7 +164,16 @@ export function renderViewer(model, playback) {
   }
 
   // 地図: MapLibre GL + OpenFreeMap ベクタータイル（実緯度経度）
-  const trackTimes = track.map((p) => p.t);
+  //
+  // 表示用に補正した軌跡。GPS の測位誤差で軌跡は道から数m ずれ、停車中は団子になるため、
+  // 描画の直前にだけ平滑化を通す。model.track（KML 由来の原本）は読むだけで変更しない。
+  // 補正後も各点が元の t を保つので、クリック→シークは補正後の線でもそのまま動く。
+  const fixedTrack = correctTrack(track);
+  const trackFixStorage = (typeof localStorage === "undefined") ? null : localStorage;
+  let trackFixOn = readTrackFix(trackFixStorage);
+  // 線の描画・自車マーカー・進行方向・クリック判定は、すべてこの viewTrack を見る。
+  let viewTrack = trackFixOn ? fixedTrack : track;
+  let trackTimes = viewTrack.map((p) => p.t);
   let lmap = null, lmarker = null;
   // ヘッドアップ(進行方向を上)表示の状態。update()/fit() から参照するため外側で保持する。
   // applyMapView(t) は地図生成時に実体を差し込む(軌跡なしセッションでは no-op のまま)。
@@ -173,11 +183,13 @@ export function renderViewer(model, playback) {
     mapEl.classList.remove("nomap");
     mapEl.innerHTML = "";
     // MapLibre は [lon, lat] 順(Leaflet と逆)なので注意。
-    const lnglats = track.map((p) => [p.lon, p.lat]);
-    const bounds = lnglats.reduce(
+    // 補正の ON/OFF で中身を差し替えるため let。
+    const boundsOf = (ll) => ll.reduce(
       (b, c) => b.extend(c),
-      new maplibregl.LngLatBounds(lnglats[0], lnglats[0])
+      new maplibregl.LngLatBounds(ll[0], ll[0])
     );
+    let lnglats = viewTrack.map((p) => [p.lon, p.lat]);
+    let bounds = boundsOf(lnglats);
     // 前回マップを破棄してから新規生成。ベクタータイルなので回転しても文字は常に正立。
     const initialColors = getThemeColors();
     lmap = lifecycle.replaceMap(() => new maplibregl.Map({
@@ -190,14 +202,19 @@ export function renderViewer(model, playback) {
     lmap.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
     lmap.addControl(new maplibregl.ScaleControl({ unit: "metric" }));
 
+    const trackFeature = () => ({
+      type: "Feature", properties: {},
+      geometry: { type: "LineString", coordinates: lnglats },
+    });
     function updateTrackLayer() {
       if (!lmap || !lmap.isStyleLoaded()) return;
-      if (!lmap.getSource("track")) {
-        lmap.addSource("track", {
-          type: "geojson",
-          data: { type: "Feature", properties: {},
-                  geometry: { type: "LineString", coordinates: lnglats } },
-        });
+      const src = lmap.getSource("track");
+      // スタイル再読込でソースごと消えるので、無ければ作り、あれば中身だけ差し替える
+      // (補正の ON/OFF は後者の経路を通る)。
+      if (!src) {
+        lmap.addSource("track", { type: "geojson", data: trackFeature() });
+      } else {
+        src.setData(trackFeature());
       }
       if (!lmap.getLayer("track-line")) {
         lmap.addLayer({
@@ -228,13 +245,13 @@ export function renderViewer(model, playback) {
 
     function carLngLatAt(t) {
       const j = nearest(trackTimes, t);
-      return j >= 0 ? [track[j].lon, track[j].lat] : lnglats[0];
+      return j >= 0 ? [viewTrack[j].lon, viewTrack[j].lat] : lnglats[0];
     }
     // 自車中心・進行方向を上。bearing は MapLibre ネイティブ機能(文字は正立のまま)。
     function applyHeadUp(t) {
       const j = nearest(trackTimes, t);
       if (j >= 0) {
-        const b = headingAt(track, j, MIN_MOVE_M);
+        const b = headingAt(viewTrack, j, MIN_MOVE_M);
         if (b != null) lastBearing = b; // 停車中(null)は直前の向きを維持
       }
       if (j === lastAppliedJ && lastBearing === lastAppliedBearing) return;
@@ -258,8 +275,15 @@ export function renderViewer(model, playback) {
     headBtn.type = "button";
     headBtn.className = "fit-btn headup-btn";
     headBtn.textContent = HeadLabel; // 押すとヘッドアップへ。既定はノースアップ。
+    // 軌跡の補正トグル。ラベルは「押すと何が起きるか」(他の2つと同じ作法)。
+    const FixLabel = "〜 軌跡を補正";
+    const RawLabel = "〜 生データを表示";
+    const fixBtn = document.createElement("button");
+    fixBtn.type = "button";
+    fixBtn.className = "fit-btn trackfix-btn";
     btns.appendChild(fitBtn);
     btns.appendChild(headBtn);
+    btns.appendChild(fixBtn);
     mapEl.appendChild(btns);
 
     // 北を上へ戻す: 回転のみ解除し、縮尺と中心は維持する(縮尺はモード間で共有)。
@@ -284,6 +308,34 @@ export function renderViewer(model, playback) {
       applyHeadUp(globalTime());
     });
 
+    // --- 軌跡の補正 ON/OFF ---
+    // 見た目だけを差し替える。model.track（原本）はどちらのモードでも変わらない。
+    function applyTrackFix(on) {
+      trackFixOn = on;
+      viewTrack = on ? fixedTrack : track;
+      trackTimes = viewTrack.map((p) => p.t);
+      lnglats = viewTrack.map((p) => [p.lon, p.lat]);
+      bounds = boundsOf(lnglats);
+      updateTrackLayer();
+      fixBtn.classList.toggle("active", on);
+      fixBtn.textContent = on ? RawLabel : FixLabel;
+      fixBtn.title = on
+        ? "GPS の生データ（補正なし）に戻す"
+        : "停車の団子と測位ノイズのギザギザを畳んで表示する";
+      // 自車マーカーと追従カメラを、差し替えた軌跡の上へ即座に置き直す。
+      const t = globalTime();
+      const j = nearest(trackTimes, t);
+      if (lmarker && j >= 0) lmarker.setLngLat([viewTrack[j].lon, viewTrack[j].lat]);
+      lastAppliedJ = null;        // 適用済み状態を捨てて必ず再適用させる
+      lastAppliedBearing = null;
+      applyMapView(t);
+    }
+    applyTrackFix(trackFixOn); // 既定はオン（保存された設定があればそれに従う）
+    fixBtn.addEventListener("click", () => {
+      applyTrackFix(!trackFixOn);
+      writeTrackFix(trackFixStorage, trackFixOn);
+    });
+
     // --- 軌跡のクリックで、その地点を通った時刻へ動画を飛ばす ---
     // 許容範囲は画面上のピクセルで決める。メートルで固定すると、広域表示では
     // 軌跡を押しても届かず、拡大時は離れた場所でも反応してしまうため。
@@ -294,7 +346,7 @@ export function renderViewer(model, playback) {
       const edge = lmap.unproject([e.point.x + CLICK_RADIUS_PX, e.point.y]);
       const radiusM = distanceMeters(e.lngLat.lat, e.lngLat.lng, edge.lat, edge.lng);
       const t = nearestPassTime(
-        track, { lat: e.lngLat.lat, lon: e.lngLat.lng }, radiusM, globalTime()
+        viewTrack, { lat: e.lngLat.lat, lon: e.lngLat.lng }, radiusM, globalTime()
       );
       if (t !== null) seekToGlobal(t);
     });
@@ -401,7 +453,7 @@ export function renderViewer(model, playback) {
     }
     if (lmarker) {
       const j = nearest(trackTimes, t);
-      if (j >= 0) lmarker.setLngLat([track[j].lon, track[j].lat]);
+      if (j >= 0) lmarker.setLngLat([viewTrack[j].lon, viewTrack[j].lat]);
     }
     applyMapView(t); // ヘッドアップ時は自車追従+回転を適用(ノースアップ時は no-op)
     draw(t);
