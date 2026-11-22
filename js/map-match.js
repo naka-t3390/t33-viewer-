@@ -13,6 +13,7 @@
 // 方針書: Torque2/docs/1122/走行軌跡マップマッチング方針_2026-11-22.html
 
 import { distanceMeters, segmentDistance } from "./geo.js";
+import { decodeTile } from "./mvt.js";
 
 export const MATCH_DEFAULTS = Object.freeze({
   zoom: 14,          // OpenFreeMap の planet タイルは maxzoom=14
@@ -222,14 +223,14 @@ export async function resolveTilesTemplate(source, fetchImpl = fetch) {
   return null;
 }
 
-/** MVT デコーダ(pbf / @mapbox/vector-tile)。使うときだけ CDN から取りに行く。 */
-async function defaultDecoder() {
-  const [{ default: Pbf }, { VectorTile }] = await Promise.all([
-    import("https://cdn.jsdelivr.net/npm/pbf@4.0.1/+esm"),
-    import("https://cdn.jsdelivr.net/npm/@mapbox/vector-tile@2.0.3/+esm"),
-  ]);
-  return (buf) => new VectorTile(new Pbf(buf));
-}
+/**
+ * 既定の MVT デコーダは自前の mvt.js を使う。
+ * CDN のライブラリを動的 import すると、OAuth トークンを持つ自オリジンで
+ * SRI も CSP も無い第三者コードを実行することになるため(理由は mvt.js の冒頭)。
+ * 実タイルで @mapbox/vector-tile と出力が完全一致することは検証済み(2026-11-22)。
+ * テストや比較では decode 引数で差し替えられる。
+ */
+const defaultDecode = (buf) => decodeTile(buf, ["transportation"]);
 
 /**
  * タイルを取得して道路線分の配列にする。
@@ -241,7 +242,7 @@ export async function loadRoadSegments({
 }) {
   const range = tileRangeForTrack(track, zoom, maxTiles);
   if (!tilesTemplate || !range) return [];
-  const toTile = decode || (await defaultDecoder());
+  const toTile = decode || defaultDecode;
   const classes = new Set(roadClasses);
   const segments = [];
   const jobs = [];
