@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  TRACK_FIX_DEFAULTS, TRACK_FIX_STORAGE_KEY, TRACK_MODES, DEFAULT_TRACK_MODE,
+  TRACK_FIX_DEFAULTS, TRACK_FIX_STORAGE_KEY,
   collapseStops, smoothTrack, simplifyTrack, correctTrack,
-  readTrackMode, writeTrackMode, nextTrackMode,
+  readTrackFix, writeTrackFix,
 } from "../js/geo-correct.js";
 import { distanceMeters, nearestPassTime } from "../js/geo.js";
 
@@ -257,46 +257,28 @@ function fakeStorage(initial) {
   };
 }
 
-test("readTrackMode: 未設定なら既定の match(道に吸着)", () => {
-  assert.equal(readTrackMode(fakeStorage()), DEFAULT_TRACK_MODE);
-  assert.equal(DEFAULT_TRACK_MODE, "match");
+test("readTrackFix: 未設定なら既定のオン", () => {
+  assert.equal(readTrackFix(fakeStorage()), true);
 });
 
-test("readTrackMode: 保存された3モードをそのまま読む", () => {
-  for (const m of TRACK_MODES) {
-    assert.equal(readTrackMode(fakeStorage({ [TRACK_FIX_STORAGE_KEY]: m })), m);
-  }
+test("readTrackFix: off を保存していればオフ、on ならオン", () => {
+  assert.equal(readTrackFix(fakeStorage({ [TRACK_FIX_STORAGE_KEY]: "off" })), false);
+  assert.equal(readTrackFix(fakeStorage({ [TRACK_FIX_STORAGE_KEY]: "on" })), true);
 });
 
-test("readTrackMode: 段階2 以前の on/off を読み替えて設定を壊さない", () => {
-  // "on" は「補正はするが吸着は知らない」ときの選択なので fix に対応させる。
-  assert.equal(readTrackMode(fakeStorage({ [TRACK_FIX_STORAGE_KEY]: "on" })), "fix");
-  assert.equal(readTrackMode(fakeStorage({ [TRACK_FIX_STORAGE_KEY]: "off" })), "raw");
+test("readTrackFix: storage が無い/例外を投げても既定のオンで動く", () => {
+  assert.equal(readTrackFix(null), true);
+  assert.equal(readTrackFix({ getItem() { throw new Error("SecurityError"); } }), true);
 });
 
-test("readTrackMode: 知らない値・storage 無し・例外でも既定で動く", () => {
-  assert.equal(readTrackMode(fakeStorage({ [TRACK_FIX_STORAGE_KEY]: "???" })), DEFAULT_TRACK_MODE);
-  assert.equal(readTrackMode(null), DEFAULT_TRACK_MODE);
-  assert.equal(readTrackMode({ getItem() { throw new Error("SecurityError"); } }), DEFAULT_TRACK_MODE);
-});
-
-test("writeTrackMode: 3モードを書き分け、書けなくても例外を出さない", () => {
+test("writeTrackFix: on/off を書き分け、書けなくても例外を出さない", () => {
   const s = fakeStorage();
-  for (const m of TRACK_MODES) {
-    writeTrackMode(s, m);
-    assert.equal(s.dump()[TRACK_FIX_STORAGE_KEY], m);
-  }
-  writeTrackMode(s, "でたらめ");
-  assert.equal(s.dump()[TRACK_FIX_STORAGE_KEY], DEFAULT_TRACK_MODE);
-  assert.doesNotThrow(() => writeTrackMode(null, "match"));
-  assert.doesNotThrow(() => writeTrackMode({ setItem() { throw new Error("QuotaExceeded"); } }, "match"));
-});
-
-test("nextTrackMode: match → fix → raw → match と巡回する", () => {
-  assert.equal(nextTrackMode("match"), "fix");
-  assert.equal(nextTrackMode("fix"), "raw");
-  assert.equal(nextTrackMode("raw"), "match");
-  assert.equal(nextTrackMode("知らない値"), DEFAULT_TRACK_MODE); // 既定へ戻す
+  writeTrackFix(s, false);
+  assert.equal(s.dump()[TRACK_FIX_STORAGE_KEY], "off");
+  writeTrackFix(s, true);
+  assert.equal(s.dump()[TRACK_FIX_STORAGE_KEY], "on");
+  assert.doesNotThrow(() => writeTrackFix(null, true));
+  assert.doesNotThrow(() => writeTrackFix({ setItem() { throw new Error("QuotaExceeded"); } }, true));
 });
 
 test("TRACK_FIX_DEFAULTS: 既定値は書き換えられない", () => {

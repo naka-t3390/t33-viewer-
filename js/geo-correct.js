@@ -151,46 +151,24 @@ export function correctTrack(track, options = {}) {
   );
 }
 
-// --- 軌跡の表示モードをブラウザに覚えさせる ---
+// --- 補正の ON/OFF をブラウザに覚えさせる ---
 // theme.js と同じ作法: localStorage を try/catch で包み、読めない環境でも落とさない。
 
 export const TRACK_FIX_STORAGE_KEY = "t33_viewer_track_fix";
 
-/**
- * 表示モードは3つ。ボタンを押すとこの順に巡る。
- *   match … 道路形状へ吸着(段階1 + 段階2)。既定
- *   fix   … 段階1 の補正のみ
- *   raw   … 生データ
- */
-export const TRACK_MODES = Object.freeze(["match", "fix", "raw"]);
-export const DEFAULT_TRACK_MODE = "match";
-
-/** 次のモード。巡回の順序はここだけが決める。知らない値は既定(先頭)へ戻す。 */
-export function nextTrackMode(mode) {
-  const i = TRACK_MODES.indexOf(mode);
-  return TRACK_MODES[(i < 0 ? 0 : i + 1) % TRACK_MODES.length];
-}
-
-/**
- * 保存された表示モード。未設定・読めない場合は既定の match。
- *
- * 段階2 を入れる前は "on"(補正あり) / "off"(生データ) の2値だった。
- * すでに保存されている人の設定を壊さないよう、ここで読み替える。
- * "on" は「補正はするが吸着は知らない」ときの選択なので fix に対応させる。
- */
-export function readTrackMode(storage) {
+/** 保存された設定。未設定・読めない場合は既定の「オン」。 */
+export function readTrackFix(storage) {
   try {
     const v = storage && storage.getItem(TRACK_FIX_STORAGE_KEY);
-    if (TRACK_MODES.includes(v)) return v;
-    if (v === "on") return "fix";
-    if (v === "off") return "raw";
+    if (v === "off") return false;
+    if (v === "on") return true;
   } catch (_) { /* プライベートモード等では既定に落とす */ }
-  return DEFAULT_TRACK_MODE;
+  return true;
 }
 
 /** 設定を保存する。書けない環境では黙って諦める(表示は切り替わったままでよい)。 */
-export function writeTrackMode(storage, mode) {
+export function writeTrackFix(storage, on) {
   try {
-    if (storage) storage.setItem(TRACK_FIX_STORAGE_KEY, TRACK_MODES.includes(mode) ? mode : DEFAULT_TRACK_MODE);
+    if (storage) storage.setItem(TRACK_FIX_STORAGE_KEY, on ? "on" : "off");
   } catch (_) { /* 保存できなくても動作は続ける */ }
 }
