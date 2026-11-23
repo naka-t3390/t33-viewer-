@@ -21,6 +21,8 @@ export function getThemeColors() {
     textMuted: dark ? "#a1a1aa" : "#877c69",
     speed: dark ? "#00e5ff" : "#2563c9",
     rpm: dark ? "#ff9800" : "#c2710c",
+    frontTorque: dark ? "#30d158" : "#15803d",
+    rearTorque: dark ? "#bf5af2" : "#9333ea",
     cursor: dark ? "#ff3d00" : "#d64545",
     track: dark ? "#1d4ed8" : "#2563c9",
     mapStyle: dark

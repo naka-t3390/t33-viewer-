@@ -1,4 +1,5 @@
 import { getToken, silentSignIn, notifyExpired } from "./auth.js";
+import { parseCanSignalsFromBuffer } from "./can-signals.js";
 
 const FILES_ENDPOINT = "https://www.googleapis.com/drive/v3/files";
 
@@ -70,6 +71,13 @@ export async function downloadText(fileId) {
   const url = `${FILES_ENDPOINT}/${fileId}?alt=media`;
   const res = await authedFetch(url);
   return res.text();
+}
+
+// CAN ログ(_can.csv.gz、約 15MB / 100MB 級の CSV)から車速とヨーレートだけを取り出す。
+// 経路の再構成にだけ使う。失敗しても再生は止めない(呼び出し側が生の軌跡のままにする)。
+export async function downloadCanSignals(fileId, startMs) {
+  const res = await authedFetch(`${FILES_ENDPOINT}/${fileId}?alt=media`);
+  return parseCanSignalsFromBuffer(await res.arrayBuffer(), startMs);
 }
 
 export async function downloadBlobUrl(fileId, onProgress) {

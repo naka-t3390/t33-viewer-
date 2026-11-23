@@ -3,6 +3,8 @@ import { hvLabel, segmentAtGlobalTime } from "./parse.js";
 import { computeTimeDomain } from "./timeline.js";
 import { createSessionLifecycle } from "./lifecycle.js";
 import { headingAt, distanceMeters, nearestPassTime } from "./geo.js";
+import { trackToFeatures } from "./dead-reckoning.js";
+import { downsampleTorque } from "./can-signals.js";
 
 // 非SW フォールバック時の blob URL。次セグメント読込・セッション切替の前に解放する。
 let activeObjectUrl = null;
@@ -55,7 +57,9 @@ const lifecycle = createSessionLifecycle({
 });
 
 export function renderViewer(model, playback) {
-  const { samples, graph, track, warnings } = model;
+  const { samples, graph, warnings } = model;
+  // 表示中の軌跡。生の GPS で始まり、CAN による補正が済めば差し替わる(setCorrection)。
+  let track = model.track;
   const times = samples.map((s) => s.t);
   const video = document.getElementById("video");
 
@@ -163,8 +167,10 @@ export function renderViewer(model, playback) {
   }
 
   // 地図: MapLibre GL + OpenFreeMap ベクタータイル（実緯度経度）
-  const trackTimes = track.map((p) => p.t);
+  let trackTimes = track.map((p) => p.t);
   let lmap = null, lmarker = null;
+  // CAN による補正の受け口。軌跡なしセッション(地図なし)では何もしない。
+  let setCorrection = () => {};
   // ヘッドアップ(進行方向を上)表示の状態。update()/fit() から参照するため外側で保持する。
   // applyMapView(t) は地図生成時に実体を差し込む(軌跡なしセッションでは no-op のまま)。
   let applyMapView = () => {};
@@ -173,11 +179,12 @@ export function renderViewer(model, playback) {
     mapEl.classList.remove("nomap");
     mapEl.innerHTML = "";
     // MapLibre は [lon, lat] 順(Leaflet と逆)なので注意。
-    const lnglats = track.map((p) => [p.lon, p.lat]);
-    const bounds = lnglats.reduce(
+    const boundsOf = (pts) => pts.reduce(
       (b, c) => b.extend(c),
-      new maplibregl.LngLatBounds(lnglats[0], lnglats[0])
+      new maplibregl.LngLatBounds(pts[0], pts[0])
     );
+    let lnglats = track.map((p) => [p.lon, p.lat]);
+    let bounds = boundsOf(lnglats);
     // 前回マップを破棄してから新規生成。ベクタータイルなので回転しても文字は常に正立。
     const initialColors = getThemeColors();
     lmap = lifecycle.replaceMap(() => new maplibregl.Map({
@@ -190,23 +197,44 @@ export function renderViewer(model, playback) {
     lmap.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
     lmap.addControl(new maplibregl.ScaleControl({ unit: "metric" }));
 
+    // 軌跡は est(推定)の連なりごとに別の線にする。GPS が取れず CAN から推定した区間は破線。
+    const trackData = () => ({ type: "FeatureCollection", features: trackToFeatures(track) });
     function updateTrackLayer() {
       if (!lmap || !lmap.isStyleLoaded()) return;
       if (!lmap.getSource("track")) {
-        lmap.addSource("track", {
-          type: "geojson",
-          data: { type: "Feature", properties: {},
-                  geometry: { type: "LineString", coordinates: lnglats } },
-        });
+        lmap.addSource("track", { type: "geojson", data: trackData() });
       }
+      const color = getThemeColors().track;
       if (!lmap.getLayer("track-line")) {
         lmap.addLayer({
           id: "track-line", type: "line", source: "track",
-          paint: { "line-color": getThemeColors().track, "line-width": 4 },
+          filter: ["!=", ["get", "est"], true],
+          paint: { "line-color": color, "line-width": 4 },
         });
       } else {
-        lmap.setPaintProperty("track-line", "line-color", getThemeColors().track);
+        lmap.setPaintProperty("track-line", "line-color", color);
       }
+      if (!lmap.getLayer("track-line-est")) {
+        lmap.addLayer({
+          id: "track-line-est", type: "line", source: "track",
+          filter: ["==", ["get", "est"], true],
+          paint: { "line-color": color, "line-width": 4, "line-dasharray": [1.5, 1.5] },
+        });
+      } else {
+        lmap.setPaintProperty("track-line-est", "line-color", color);
+      }
+    }
+    // 表示する軌跡を差し替える(生 GPS ⇔ CAN 補正)。動画の再生は止めない。
+    function applyTrack(next) {
+      track = next;
+      trackTimes = track.map((p) => p.t);
+      lnglats = track.map((p) => [p.lon, p.lat]);
+      bounds = boundsOf(lnglats);
+      const src = lmap && lmap.getSource("track");
+      if (src) src.setData(trackData());
+      lastAppliedJ = null; // ヘッドアップの追従を取り直す
+      lastAppliedBearing = null;
+      refreshDomain(); // 補正経路が GPS より長く続けば、横軸も伸ばす
     }
     lmap.on("load", updateTrackLayer);
     lmap.on("style.load", updateTrackLayer);
@@ -299,14 +327,16 @@ export function renderViewer(model, playback) {
       if (t !== null) seekToGlobal(t);
     });
     // 軌跡の上ではカーソルを指マークにして、押せることを示す。
-    lmap.on("mouseenter", "track-line", () => { lmap.getCanvas().style.cursor = "pointer"; });
-    lmap.on("mouseleave", "track-line", () => { lmap.getCanvas().style.cursor = ""; });
+    for (const layer of ["track-line", "track-line-est"]) {
+      lmap.on("mouseenter", layer, () => { lmap.getCanvas().style.cursor = "pointer"; });
+      lmap.on("mouseleave", layer, () => { lmap.getCanvas().style.cursor = ""; });
+    }
   } else {
     lifecycle.replaceMap(null); // 軌跡なしセッション: 前回マップがあれば破棄する
     mapEl.classList.add("nomap");
   }
 
-  // グラフ（速度=青, rpm=橙）
+  // グラフ（左軸: 速度=青, 右軸: 前トルク=緑・後トルク=紫）
   const cv = document.getElementById("graph");
   const PAD = { l: 46, r: 54, t: 26, b: 22 };
   const plot = () => ({ x: PAD.l, y: PAD.t, w: cv.width - PAD.l - PAD.r, h: cv.height - PAD.t - PAD.b });
@@ -333,7 +363,20 @@ export function renderViewer(model, playback) {
     const m = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
     return m * p;
   };
-  const speedAxis = niceMax(vmax("speed")), rpmAxis = niceMax(vmax("rpm"));
+  const speedAxis = niceMax(vmax("speed"));
+  // 前後モータートルク(CAN 1D4 / 1BC)。裏で読み込まれ次第 setMotorTorque で流し込む。
+  let frontTorqueSeries = [];
+  let rearTorqueSeries = [];
+  let torqueAxis = 100;
+  function setMotorTorque({ frontTorque = [], rearTorque = [] } = {}) {
+    frontTorqueSeries = downsampleTorque(frontTorque, 0.2);
+    rearTorqueSeries = downsampleTorque(rearTorque, 0.2);
+    let maxAbs = 50;
+    for (const p of frontTorqueSeries) { const a = Math.abs(p.nm); if (a > maxAbs) maxAbs = a; }
+    for (const p of rearTorqueSeries) { const a = Math.abs(p.nm); if (a > maxAbs) maxAbs = a; }
+    torqueAxis = niceMax(maxAbs);
+    draw(globalTime());
+  }
   const mmss = (s) => { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
   const xAt = (t, P) => P.x + (t - tMin) / ((tMax - tMin) || 1) * P.w;
 
@@ -344,19 +387,33 @@ export function renderViewer(model, playback) {
     ctx.lineWidth = 1;
     ctx.strokeStyle = colors.grid;
     for (let i = 0; i <= 4; i++) { const y = P.y + P.h * i / 4; ctx.beginPath(); ctx.moveTo(P.x, y); ctx.lineTo(P.x + P.w, y); ctx.stroke(); }
+    // トルク 0 Nm の基準線(中央)をわずかに強調する
+    ctx.save();
+    ctx.strokeStyle = colors.textMuted;
+    ctx.globalAlpha = 0.35;
+    ctx.setLineDash([4, 4]);
+    const yZero = P.y + P.h / 2;
+    ctx.beginPath(); ctx.moveTo(P.x, yZero); ctx.lineTo(P.x + P.w, yZero); ctx.stroke();
+    ctx.restore();
     ctx.fillStyle = colors.textMuted; ctx.textAlign = "center"; ctx.textBaseline = "top";
     for (let i = 0; i <= 4; i++) {
       const t = tMin + (tMax - tMin) * i / 4, x = P.x + P.w * i / 4;
       ctx.strokeStyle = colors.grid; ctx.beginPath(); ctx.moveTo(x, P.y); ctx.lineTo(x, P.y + P.h); ctx.stroke();
       ctx.fillText(mmss(t), x, P.y + P.h + 4);
     }
+    // 左軸: 速度 (km/h)
     ctx.fillStyle = colors.speed; ctx.textAlign = "right"; ctx.textBaseline = "middle";
     for (let i = 0; i <= 2; i++) { const y = P.y + P.h - P.h * i / 2; ctx.fillText(String(Math.round(speedAxis * i / 2)), P.x - 6, y); }
-    ctx.fillStyle = colors.rpm; ctx.textAlign = "left";
-    for (let i = 0; i <= 2; i++) { const y = P.y + P.h - P.h * i / 2; ctx.fillText(String(Math.round(rpmAxis * i / 2)), P.x + P.w + 6, y); }
+    // 右軸: 前後モータートルク (-torqueAxis 〜 +torqueAxis Nm)
+    ctx.fillStyle = colors.frontTorque; ctx.textAlign = "left";
+    ctx.fillText(`+${Math.round(torqueAxis)}`, P.x + P.w + 6, P.y);
+    ctx.fillText("0", P.x + P.w + 6, P.y + P.h / 2);
+    ctx.fillText(`-${Math.round(torqueAxis)}`, P.x + P.w + 6, P.y + P.h);
+    // 凡例
     ctx.textBaseline = "middle"; ctx.textAlign = "left";
     ctx.fillStyle = colors.speed; ctx.fillRect(P.x, 12, 14, 3); ctx.fillText("速度 (km/h)", P.x + 18, 13);
-    ctx.fillStyle = colors.rpm; ctx.fillRect(P.x + 130, 12, 14, 3); ctx.fillText("RPM", P.x + 148, 13);
+    ctx.fillStyle = colors.frontTorque; ctx.fillRect(P.x + 102, 12, 14, 3); ctx.fillText("前トルク (Nm)", P.x + 120, 13);
+    ctx.fillStyle = colors.rearTorque; ctx.fillRect(P.x + 216, 12, 14, 3); ctx.fillText("後トルク (Nm)", P.x + 234, 13);
   }
   function line(key, max, color, P) {
     const ctx = cv.getContext("2d");
@@ -368,13 +425,30 @@ export function renderViewer(model, playback) {
     }
     ctx.stroke();
   }
+  function torqueLine(series, maxAbs, color, P) {
+    if (!series.length) return;
+    const ctx = cv.getContext("2d");
+    const yMid = P.y + P.h / 2;
+    const halfH = P.h / 2;
+    ctx.strokeStyle = color; ctx.lineWidth = 1.3; ctx.beginPath();
+    let prevT = null;
+    for (const p of series) {
+      const x = xAt(p.t, P);
+      const y = yMid - (p.nm / maxAbs) * halfH;
+      if (prevT == null || p.t - prevT > 2.0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+      prevT = p.t;
+    }
+    ctx.stroke();
+  }
   function draw(t) {
     const ctx = cv.getContext("2d"); ctx.clearRect(0, 0, cv.width, cv.height);
     const P = plot();
     const colors = getThemeColors();
     drawFrame(P);
     line("speed", speedAxis, colors.speed, P);
-    line("rpm", rpmAxis, colors.rpm, P);
+    torqueLine(frontTorqueSeries, torqueAxis, colors.frontTorque, P);
+    torqueLine(rearTorqueSeries, torqueAxis, colors.rearTorque, P);
     const x = xAt(t, P);
     ctx.strokeStyle = colors.cursor; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, P.y); ctx.lineTo(x, P.y + P.h); ctx.stroke();
   }
@@ -432,4 +506,5 @@ export function renderViewer(model, playback) {
   fit();
 
   lifecycle.restartLoop(update); // 前回セッションのループを止めてから開始する
+  return { setCorrection, setMotorTorque };
 }

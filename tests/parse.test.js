@@ -351,6 +351,11 @@ test("buildViewModel: JSON無しはCSV先頭時刻にフォールバック+警�
   assert.equal(vm.samples[0].t, 0.0);
   assert.ok(vm.warnings.some((w) => w.includes("video_start_ms")));
 });
+test("buildViewModel: 時刻の起点 startMs を返す(CAN の時刻合わせに使う)", () => {
+  assert.equal(buildViewModel(VM_CSV, VM_KML, '{"video_start_ms": 1000}', true).startMs, 1000);
+  // JSON が無ければ CSV 先頭の時刻
+  assert.equal(buildViewModel(VM_CSV, VM_KML, "", true).startMs, 1000);
+});
 test("buildViewModel: 動画無しで警告", () => {
   const vm = buildViewModel(VM_CSV, VM_KML, '{"video_start_ms": 1000}', false);
   assert.ok(vm.warnings.some((w) => w.includes("動画")));
@@ -434,4 +439,35 @@ test("filterSessionsByDuration: 60秒未満を除外し、60秒以上と未取�
     out.map((s) => s.stem),
     ["just_60s", "long_120s", "unknown_null", "missing_entry"]
   );
+});
+
+// ---- CAN ログ(経路の再構成用) ----
+
+test("groupSessions: _can.csv.gz をセッションの can として持つ", () => {
+  const sessions = groupSessions([
+    { id: "c", name: "t33_20261121_112223.csv" },
+    { id: "g", name: "t33_20261121_112223_can.csv.gz" },
+  ]);
+  assert.equal(sessions.length, 1);
+  assert.equal(sessions[0].can, "g");
+  assert.equal(sessions[0].csv, "c", "CAN ログを走行 CSV と取り違えない");
+});
+test("groupSessions: 古い形式の解凍済み _can.csv も can として拾う", () => {
+  const [s] = groupSessions([
+    { id: "c", name: "t33_20260815_145700.csv" },
+    { id: "r", name: "t33_20260815_145700_can.csv" },
+  ]);
+  assert.equal(s.can, "r");
+  assert.equal(s.csv, "c");
+});
+test("groupSessions: CAN ログが無ければ can は無い", () => {
+  const [s] = groupSessions([{ id: "c", name: "t33_20261121_112223.csv" }]);
+  assert.ok(!s.can);
+});
+test("groupSessions: _canmark.csv などは can にしない", () => {
+  const [s] = groupSessions([
+    { id: "c", name: "t33_20261121_112223.csv" },
+    { id: "m", name: "t33_20261121_112223_canmark.csv" },
+  ]);
+  assert.ok(!s.can);
 });

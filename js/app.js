@@ -1,7 +1,8 @@
 import { initTheme } from "./theme.js";
 import { CONFIG } from "./config.js";
 import { initAuth, signIn, onTokenExpired, getToken, isGranted, silentSignIn, onTokenRefreshed } from "./auth.js";
-import { findFolderId, listChildren, downloadText, downloadBlobUrl } from "./drive.js";
+import { findFolderId, listChildren, downloadText, downloadBlobUrl, downloadCanSignals } from "./drive.js";
+import { correctTrack } from "./dead-reckoning.js";
 import { selectDateFolders, partitionDateChildren, groupSessions, buildViewModel, parseSegmentedMeta, buildSegmentPlaylist, csvDurationSec, filterSessionsByDuration } from "./parse.js";
 import { renderViewer } from "./viewer.js";
 import { buildMediaUrl } from "./media-range.js";
@@ -149,12 +150,36 @@ async function openSession(s) {
       });
     }
     const model = buildViewModel(csvText, kmlText, jsonText, hasVideo);
-    renderViewer(model, playback);
+    const viewer = renderViewer(model, playback);
     setStatus(`${s.dateLabel} ${s.timeLabel}`);
+    // 生の GPS 軌跡で先に表示し、CAN による補正は裏で計算して差し替える(再生は止めない)。
+    correctTrackInBackground(s, model, viewer, seq);
   } catch (e) {
     if (seq !== opSeq) return;
     setError(String(e.message || e));
     setStatus("");
+  }
+}
+
+// GPS は測位を失うと最後の位置を返し続け、復帰時に数百 m 飛ぶ。シャシ系の CAN(車速・ヨーレート)は
+// ほぼ毎回取れるので、これで走行経路を組み、GPS は出発位置と補正点にだけ使う(dead-reckoning.js)。
+// 元の KML/CSV は変えない。補正できない・失敗したときは生の軌跡のまま。
+async function correctTrackInBackground(s, model, viewer, seq) {
+  if (!s.can || !viewer) return;
+  const canCorrectTrack = model.track.length >= 2;
+  if (canCorrectTrack) viewer.setCorrection({ state: "loading" });
+  try {
+    const signals = await downloadCanSignals(s.can, model.startMs);
+    if (seq !== opSeq) return; // その間に別のセッションへ切り替わった
+    viewer.setMotorTorque(signals);
+    if (canCorrectTrack) {
+      const result = correctTrack(model.track, signals);
+      viewer.setCorrection(result ? { state: "ready", result } : { state: "none" });
+    }
+  } catch (e) {
+    if (seq !== opSeq) return;
+    console.warn(`CAN 信号の読み込みに失敗しました: ${s.stem}`, e);
+    if (canCorrectTrack) viewer.setCorrection({ state: "failed" });
   }
 }
 

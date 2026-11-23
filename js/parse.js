@@ -122,6 +122,9 @@ function classifyKind(name) {
   //
   // そこで除外リストをやめ、**走行CSVの名前そのもの**を積極的に判定する。
   // 今後どんなサフィックス付き CSV が増えても、ここは黙って正しく無視する。
+  // CAN ログは走行 CSV ではない。経路の再構成(CAN の車速・ヨーレート)にだけ使う。
+  // 端末は記録停止後に gzip 圧縮する(_can.csv.gz)。古いセッションには解凍済みの _can.csv もある。
+  if (name.endsWith("_can.csv.gz") || name.endsWith("_can.csv")) return "can";
   if (name.endsWith(".csv")) return DRIVE_CSV_RE.test(name) ? "csv" : null;
   if (name.endsWith(".kml")) return "kml";
   if (name.endsWith(".mp4")) return "mp4";
@@ -303,7 +306,7 @@ export function buildViewModel(csvText, kmlText, jsonText, hasVideo, maxPoints =
   if (!hasVideo) {
     warnings.push("動画ファイル（mp4）が見つからないため動画なしで表示します。");
   }
-  return { synced, samples, graph: decimate(samples, maxPoints), track, warnings };
+  return { synced, startMs, samples, graph: decimate(samples, maxPoints), track, warnings };
 }
 
 const DRIVE_FOLDER_MIME = "application/vnd.google-apps.folder";
