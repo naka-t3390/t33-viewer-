@@ -33,13 +33,18 @@
   <div class="gauge"><span class="k">HV状態</span><span class="v" id="g-hv">--</span></div>
   <div class="gauge"><span class="k">時刻</span><span class="v" id="g-time">0.0</span><span class="u">s</span></div>
 </div>
-<div class="mid">
-  <video id="video" controls playsinline></video>
-  <!-- 右枠はグラフと端末画面(縦型)の入れ替え。どちらか一方だけが表示される。 -->
-  <canvas id="graph"></canvas>
+<!-- 左に[動画＋グラフ / 地図]を積み、右に端末画面を全高で立てる。
+     端末画面を出している間はグラフと入れ替わり、地図は左下に残って幅だけ狭くなる。 -->
+<div class="stage">
+  <div class="stage-left">
+    <div class="mid">
+      <video id="video" controls playsinline></video>
+      <canvas id="graph"></canvas>
+    </div>
+    <div id="map" class="nomap"></div>
+  </div>
   <div id="cockpit" class="hidden"></div>
 </div>
-<div id="map" class="nomap"></div>
 </div>
 </div>
 

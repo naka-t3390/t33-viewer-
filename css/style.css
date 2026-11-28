@@ -160,15 +160,28 @@ canvas#graph { width:100%; height:42vh; display:block; background:var(--card-bg)
 /* `canvas#graph` の display:block は `.hidden` より詳細度が高いので、
    入れ替えのために同じ詳細度で打ち消す(これが無いとグラフが消えない)。 */
 canvas#graph.hidden { display: none; }
+/* 端末画面も同じ理由(.cockpit-panel が display:flex を持つ)で打ち消しが要る。 */
+#cockpit.hidden { display: none; }
+
+/* 左に[動画＋グラフ / 地図]、右に端末画面。端末画面は**画面の縦いっぱい**を使う。
+   グラフの枠(42vh)に収めると幅が 280px ほどにしかならず、文字も俯瞰図も小さすぎた。 */
+.stage { display: flex; gap: 0; flex: 1 1 0; min-height: 0; }
+.stage-left { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
 #cockpit {
-  /* KYV46 の画面比(9:19.5)を保ち、枠の中で中央に置く。高さが伸びたぶんは
-     下の #map(flex:1)が吸収する。 */
+  /* KYV46 の画面比(9:19.5)。高さを枠いっぱいに取り、幅はそこから決まる。 */
+  /* 高さは align-self:stretch で枠から受け取り、幅は比から決まる。
+     height:100% にすると上下の margin のぶんだけ縦にはみ出す。 */
   aspect-ratio: 9 / 19.5;
-  height: clamp(420px, 68vh, 760px);
-  justify-self: center;
+  flex: 0 0 auto;
+  align-self: stretch;
+  margin: 8px 12px 12px 0;
   /* 文字の基準は JS(resize)が枠の幅から決める。ここは読み込み前の保険。 */
   font-size: 12px;
 }
+/* 端末画面を出している間は、空いたグラフの枠のぶん動画を広げる
+   (地図は左下に残り、幅が狭くなるだけ)。 */
+body.cockpit-on .mid { grid-template-columns: 1fr; }
+body.cockpit-on video { width: 100%; height: auto; max-width: calc(46vh * 16 / 9); }
 .cockpit-panel {
   --cp-bg: #000;
   --cp-card: #1d1d1f;
@@ -299,5 +312,7 @@ canvas#graph.hidden { display: none; }
 @media (max-width: 760px) {
   /* 狭い画面では縦積みになる。高さで決めると細くて読めないので幅で決める
      (スマホは縦にスクロールできるので、縦に長いぶんは問題にならない)。 */
-  #cockpit { width: min(100%, 360px); height: auto; justify-self: center; }
+  .stage { display: block; }
+  #cockpit { width: min(100%, 360px); height: auto; margin: 8px auto 12px; }
+  body.cockpit-on video { max-width: 100%; }
 }

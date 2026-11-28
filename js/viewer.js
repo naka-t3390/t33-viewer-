@@ -82,6 +82,8 @@ function applyRightPane(showCockpit) {
   if (!cockpit || !graph) return;
   cockpit.classList.toggle("hidden", !showCockpit);
   graph.classList.toggle("hidden", showCockpit);
+  // 端末画面を出している間だけ効く見た目(動画を広げる)を CSS 側へ伝える。
+  document.body.classList.toggle("cockpit-on", showCockpit);
   if (btn) {
     btn.classList.toggle("active", showCockpit);
     btn.textContent = showCockpit ? "グラフ" : "端末画面";
