@@ -141,3 +141,163 @@ test("downsampleTorque は指定秒刻みのバケット平均で間引く", () 
   assert.ok(Math.abs(out[0].nm - 15) < 1e-6);
   assert.ok(Math.abs(out[1].nm - -10) < 1e-6);
 });
+
+// ────────────────────────────────────────────────────────────
+// 端末画面(縦型)パネル用の 20Hz グリッド
+// ────────────────────────────────────────────────────────────
+import { sampleCockpitAt, COCKPIT_HZ, COCKPIT_HOLD_SEC } from "../js/can-signals.js";
+import { cockpitModelOf } from "../js/cockpit-model.js";
+
+/** data の 16 進 16 桁をそのまま指定する行。 */
+const raw = (ms, id, hex16, dlc = 8) => `${ms},${id},0,${dlc},${hex16}`;
+/** 1D4: b2-3 にトルク、b5 にシフト/READY。 */
+const line1D4 = (ms, torqueHex4, b5Hex2) => raw(ms, "1D4", `0000${torqueHex4}00${b5Hex2}0000`);
+/** 1DA: b4-5 に前モータ回転。 */
+const line1DA = (ms, rpmHex4) => raw(ms, "1DA", `00000000${rpmHex4}0000`);
+
+const gridOf = (lines, startMs = START) => {
+  const p = createCanSignalParser(startMs);
+  p.feed(lines.join("\n") + "\n");
+  return p.finish().cockpit;
+};
+
+test("グリッドは 20Hz(端末の CAN 公開間隔 50ms と同じ刻み)", () => {
+  assert.equal(COCKPIT_HZ, 20);
+});
+
+test("1D4 からトルクとシフト・READY を同じ行で取り出す", () => {
+  // b2-3 = 0x2100 → +66.0 Nm / b5 = 0x44 → シフト D・READY 点灯
+  const grid = gridOf([line1D4(START + 1000, "2100", "44")]);
+  const s = sampleCockpitAt(grid, 1.0);
+  assert.equal(s.frontTorqueNm, 66);
+  assert.equal(s.shift, 2); // D
+  assert.equal(s.ready, 1);
+});
+
+test("1 バケット(50ms)に複数フレームが来たら最後の値が残る(平均しない)", () => {
+  const grid = gridOf([
+    line1D4(START + 1000, "2100", "44"), // +66.0
+    line1D4(START + 1040, "0500", "44"), // +10.0 ← 同じバケットの後の方
+  ]);
+  assert.equal(sampleCockpitAt(grid, 1.0).frontTorqueNm, 10);
+});
+
+test("10Hz の信号(SOC・温度)は次の値が来るまで前値を保持する", () => {
+  const lines = [raw(START, "55B", "8BC0000000000000")]; // SOC 55.9%
+  // 1D4 を 50ms ごとに 5 秒ぶん流して「CAN は生きている」状態を作る
+  for (let ms = 0; ms <= 5000; ms += 50) lines.push(line1D4(START + ms, "0000", "44"));
+  const grid = gridOf(lines);
+  assert.ok(Math.abs(sampleCockpitAt(grid, 0.0).socPct - 55.9) < 0.01, "来た直後");
+  assert.ok(Math.abs(sampleCockpitAt(grid, 1.9).socPct - 55.9) < 0.01, "保持の内側");
+  assert.ok(Number.isNaN(sampleCockpitAt(grid, 3.0).socPct), "保持の上限を超えたら未取得へ戻す");
+});
+
+test("前値の保持には上限がある(CAN が落ちた区間で古い値を出し続けない)", () => {
+  assert.equal(COCKPIT_HOLD_SEC, 2.0);
+  const grid = gridOf([line1D4(START, "2100", "44"), line1D4(START + 10000, "2100", "44")]);
+  // 10 秒の空白。保持の 2 秒を越えた中間は「CAN なし」にする
+  assert.equal(sampleCockpitAt(grid, 5.0), null);
+  assert.ok(sampleCockpitAt(grid, 1.0) !== null, "落ちる直前までは残す");
+});
+
+test("CAN ログの範囲外(記録前・記録後)は null を返す", () => {
+  const grid = gridOf([line1D4(START + 1000, "2100", "44")]);
+  assert.equal(sampleCockpitAt(grid, -1), null);
+  assert.equal(sampleCockpitAt(grid, 60), null);
+  assert.equal(sampleCockpitAt(null, 1), null);
+  assert.equal(sampleCockpitAt(grid, NaN), null);
+});
+
+test("容量を超える長い走行でも伸ばして読める(16,384 行 = 819 秒の先)", () => {
+  const grid = gridOf([line1D4(START, "2100", "44"), line1D4(START + 1_000_000, "0500", "42")]);
+  const s = sampleCockpitAt(grid, 1000);
+  assert.equal(s.frontTorqueNm, 10);
+  assert.equal(s.shift, 1); // R
+});
+
+test("四輪速は 289(前) と 28A(後) から FL/FR/RL/RR の順で入る", () => {
+  // 289: b2-3=FL, b4-5=FR / 28A: b0-1=RR, b2-3=RL
+  const grid = gridOf([
+    raw(START, "289", "0000" + "1C34" + "1C34" + "0000"), // FL/FR = 7220 → 40.07km/h
+    raw(START, "28A", "1388" + "1388" + "00000000"), // RR/RL = 5000 → 27.75km/h
+  ]);
+  const w = sampleCockpitAt(grid, 0).wheelKmh;
+  assert.ok(Math.abs(w[0] - 40.07) < 0.05, `FL got ${w[0]}`);
+  assert.ok(Math.abs(w[1] - 40.07) < 0.05, `FR got ${w[1]}`);
+  assert.ok(Math.abs(w[2] - 27.75) < 0.05, `RL got ${w[2]}`);
+  assert.ok(Math.abs(w[3] - 27.75) < 0.05, `RR got ${w[3]}`);
+});
+
+test("車速(29A)・電圧/電流(1DB)・発電回転(191)・温度(50F/4B0)・負荷(41A)を拾う", () => {
+  const grid = gridOf([
+    raw(START, "29A", "00000000" + "13F0" + "0000"), // 5104 → 49.996 km/h
+    raw(START, "1DB", "EBA0" + "B100" + "00000000"), // 電流 -81.5A / 電圧 354.0V
+    raw(START, "191", "0000000000" + "2943" + "00"), // 10563 → 2062.8 rpm
+    raw(START, "50F", "00" + "73" + "000000" + "4B" + "00"), // 水温 75℃ / 吸気 25℃
+    raw(START, "4B0", "56" + "00000000000000"), // 油温 56℃
+    raw(START, "41A", "000000" + "2021" + "000000"), // 8225 → 99.97%
+  ]);
+  const s = sampleCockpitAt(grid, 0);
+  assert.ok(Math.abs(s.speedKmh - 49.996) < 0.01, `車速 ${s.speedKmh}`);
+  assert.equal(s.batteryV, 354);
+  assert.equal(s.batteryA, -81.5);
+  assert.ok(Math.abs(s.engineRpm - 2062.8) < 0.1, `発電回転 ${s.engineRpm}`);
+  assert.equal(s.coolantC, 75);
+  assert.equal(s.intakeC, 25);
+  assert.equal(s.oilC, 56);
+  assert.ok(Math.abs(s.loadPct - 99.9668) < 0.01, `負荷 ${s.loadPct}`);
+});
+
+test("既存の戻り値(speed / yaw / frontTorque / rearTorque)の形は変えていない", () => {
+  const p = createCanSignalParser(START);
+  p.feed(
+    [
+      line(START, "289", 5107),
+      line(START + 10, "0AB", 32000),
+      line1D4(START + 20, "2100", "44"),
+      raw(START + 30, "1BC", "0000" + "0B90" + "00000000"),
+    ].join("\n") + "\n"
+  );
+  const s = p.finish();
+  assert.equal(s.speed.length, 1);
+  assert.equal(s.yaw.length, 1);
+  assert.deepEqual(s.frontTorque, [{ t: 0.02, nm: 66 }]);
+  assert.deepEqual(s.rearTorque, [{ t: 0.03, nm: 23.125 }]);
+  assert.ok(s.cockpit && s.cockpit.rows > 0, "cockpit グリッドが足されている");
+});
+
+// ---- 時刻合わせの回帰(2026-11-28 セッション 102230 の後退区間) ----
+//
+// `_video.json` の start_ms を t=0 とすると、実データでは
+//   前モータ回転 < -5 rpm が 599.88〜617.00 秒
+//   シフト R     が 600.21〜618.01 秒(17.8 秒)
+// で一致した。同じ形を合成フィクスチャで固定し、基準がずれたら落ちるようにする。
+test("時刻合わせ: 600 秒から R + 前回転が負になるログを、その時刻で読める", () => {
+  const lines = [];
+  // 589〜590 秒: D で前進(+2806 rpm)
+  for (let ms = 589_000; ms <= 590_000; ms += 50) {
+    lines.push(line1D4(START + ms, "2100", "44")); // D・READY
+    lines.push(line1DA(START + ms, "15EC")); // +2806.0 rpm
+  }
+  // 600〜618 秒: R で後退(-270.5 rpm)
+  for (let ms = 600_000; ms <= 618_000; ms += 50) {
+    lines.push(line1D4(START + ms, "0500", "42")); // R・READY
+    lines.push(line1DA(START + ms, "FDE3")); // -270.5 rpm
+  }
+  const grid = gridOf(lines);
+
+  const before = cockpitModelOf(sampleCockpitAt(grid, 590));
+  assert.equal(before.shift.text, "D");
+  assert.ok(Number(before.front.rpm.text.replace(/,/g, "")) > 0, "前進は正");
+
+  const reverse = cockpitModelOf(sampleCockpitAt(grid, 600.5));
+  assert.equal(reverse.shift.text, "R");
+  assert.equal(reverse.front.rpm.text, "-270");
+  assert.equal(reverse.ready, true);
+
+  const stillReverse = cockpitModelOf(sampleCockpitAt(grid, 617.0));
+  assert.equal(stillReverse.shift.text, "R");
+
+  // 590 と 600 の間は CAN が無い(保持の上限を越える空白)
+  assert.equal(sampleCockpitAt(grid, 595), null);
+});

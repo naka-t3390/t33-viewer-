@@ -149,3 +149,155 @@ canvas#graph { width:100%; height:42vh; display:block; background:var(--card-bg)
   #panel { position:fixed; left:0; top:58px; bottom:0; z-index:2000; max-height:none;
            box-shadow:2px 0 12px rgba(0,0,0,.25); }
 }
+
+/* ─────────────────────────────────────────────────────────────
+   端末(KYV46)縦型記録画面の再現パネル。
+
+   `.mid` の右枠(グラフと同じ場所)に入り、ヘッダのボタンでグラフと入れ替わる
+   (2026-11-28 の所有者指定)。端末画面の再現なので**配色は暗色で固定**し、
+   ビューアのライト/ダークテーマには追従させない。
+   ───────────────────────────────────────────────────────────── */
+/* `canvas#graph` の display:block は `.hidden` より詳細度が高いので、
+   入れ替えのために同じ詳細度で打ち消す(これが無いとグラフが消えない)。 */
+canvas#graph.hidden { display: none; }
+#cockpit {
+  /* KYV46 の画面比(9:19.5)を保ち、枠の中で中央に置く。高さが伸びたぶんは
+     下の #map(flex:1)が吸収する。 */
+  aspect-ratio: 9 / 19.5;
+  height: clamp(420px, 68vh, 760px);
+  justify-self: center;
+  /* 文字の基準は JS(resize)が枠の幅から決める。ここは読み込み前の保険。 */
+  font-size: 12px;
+}
+.cockpit-panel {
+  --cp-bg: #000;
+  --cp-card: #1d1d1f;
+  --cp-card2: #161618;
+  --cp-text: #fff;
+  --cp-muted: #9e9e9e;
+  --cp-unverified: #6e6e6e;
+  --cp-green: #00ff88;
+  --cp-amber: #ffb300;
+  --cp-front: #7cc4e0;
+  --cp-rear: #bf5af2;
+  --cp-ready: #ff9f0a;
+  --cp-epedal: #0a84ff;
+  --cp-reverse: #ff453a;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+  box-sizing: border-box;
+  padding: 0.6em 0.8em;
+  background: var(--cp-bg);
+  color: var(--cp-text);
+  border: 1px solid #2a2a2e;
+  border-radius: 10px;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+}
+.cockpit-panel .cp-card { background: var(--cp-card); border-radius: 0.9em; padding: 0.5em 0.7em; }
+.cockpit-panel .cp-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5em; }
+.cockpit-panel .cp-baseline { align-items: baseline; }
+/* ラベルは折り返さない。縦枠は幅が狭く、折り返すと「回転数」が「回転/数」に割れて読めない。 */
+.cockpit-panel .cp-k { color: var(--cp-muted); font-size: 0.95em; font-weight: 600; white-space: nowrap; }
+.cockpit-panel .cp-u { color: var(--cp-muted); font-size: 0.85em; white-space: nowrap; }
+.cockpit-panel .cp-label { font-size: 0.9em; font-weight: 700; letter-spacing: .02em; }
+.cockpit-panel .cp-green { color: var(--cp-green); }
+.cockpit-panel .cp-amber { color: var(--cp-amber); }
+/* 裏付けのない値はグレー。端末の T33Colors.Unverified と同じ約束。 */
+.cockpit-panel .cp-unverified { color: var(--cp-unverified) !important; }
+
+.cockpit-panel .cp-head { display: flex; align-items: center; gap: 0.5em; font-size: 1.05em; }
+.cockpit-panel .cp-title { font-weight: 700; }
+.cockpit-panel .cp-rec { color: #ff3d00; font-weight: 700; font-size: 0.85em; }
+.cockpit-panel .cp-clock { margin-left: auto; color: var(--cp-green); font-weight: 700; font-size: 0.9em; }
+
+/* CAN が無い/落ちた区間。もっともらしい値を出さず、はっきり言う。 */
+.cockpit-panel .cp-nocan { display: none; color: var(--cp-amber); font-size: 0.9em; font-weight: 700; }
+.cockpit-panel .cp-nocan.cp-on { display: block; }
+
+.cockpit-panel .cp-speed { font-size: 3.4em; font-weight: 700; letter-spacing: -.02em; }
+.cockpit-panel .cp-unit-lg { color: var(--cp-muted); font-size: 1.1em; margin-left: .3em; }
+.cockpit-panel .cp-bar { height: 0.75em; margin-top: 0.35em; background: #2a2a2e; border-radius: 0.4em; overflow: hidden; }
+.cockpit-panel .cp-bar > i { display: block; height: 100%; width: 0; background: var(--cp-green); transition: width .08s linear; }
+.cockpit-panel .cp-bar > i.cp-unverified-bar { background: var(--cp-unverified); }
+
+.cockpit-panel .cp-bms-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.3em 0.6em; }
+.cockpit-panel .cp-bms-cell { display: flex; align-items: baseline; gap: 0.3em; }
+.cockpit-panel .cp-bms-cell .cp-v { margin-left: auto; font-size: 1.25em; font-weight: 700; }
+.cockpit-panel .cp-power-row { margin-top: 0.4em; border-top: 1px solid #2a2a2e; padding-top: 0.35em; }
+.cockpit-panel .cp-power { margin-left: auto; font-size: 1.2em; font-weight: 700; }
+.cockpit-panel .cp-power.cp-discharge { color: var(--cp-green); }
+.cockpit-panel .cp-power.cp-charge { color: var(--cp-reverse); }
+.cockpit-panel .cp-note { color: var(--cp-unverified); font-size: 0.8em; }
+
+.cockpit-panel .cp-motors { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5em; }
+.cockpit-panel .cp-motor-head { margin-bottom: 0.35em; }
+.cockpit-panel .cp-motor-title { font-size: 0.95em; font-weight: 600; white-space: nowrap; }
+.cockpit-panel .cp-motor { min-width: 0; }
+.cockpit-panel .cp-stat-v, .cockpit-panel .cp-chip-v, .cockpit-panel .cp-bms-cell .cp-v { white-space: nowrap; }
+.cockpit-panel .cp-motor-kw { font-size: 1.05em; font-weight: 700; white-space: nowrap; }
+.cockpit-panel .cp-front { color: var(--cp-front); }
+.cockpit-panel .cp-rear { color: var(--cp-rear); }
+.cockpit-panel .cp-stat {
+  display: flex; align-items: baseline; gap: 0.3em; margin-top: 0.3em;
+  background: var(--cp-card2); border-radius: 0.6em; padding: 0.25em 0.5em;
+}
+.cockpit-panel .cp-stat-v { margin-left: auto; font-size: 1.5em; font-weight: 700; }
+/* 12bit の上限(±255.9Nm)に届いた疑い。未解決なので印だけ出す。 */
+.cockpit-panel .cp-saturated { color: var(--cp-amber) !important; text-decoration: underline dotted; }
+
+/* 下段。端末は[車体アニメーション | 俯瞰図]の横並びだが、こちらは枠が 9:19.5 と細長く、
+   横に割ると俯瞰図が小さくなりすぎる。車体アニメーション(端末の画像アセット)は
+   再現しないので、左カードの中身を全幅にして、俯瞰図を全幅の正方形で下に置く。 */
+.cockpit-panel .cp-bottom { display: flex; flex-direction: column; gap: 0.5em; flex: 1 1 auto; min-height: 0; }
+.cockpit-panel .cp-left { display: flex; flex-direction: column; gap: 0.45em; background: #0d0d0f; flex: 0 0 auto; }
+.cockpit-panel .cp-shift-row { display: flex; gap: 0.5em; align-items: center; }
+.cockpit-panel .cp-shift {
+  width: 2.6em; height: 2.6em; display: flex; align-items: center; justify-content: center;
+  font-size: 1.5em; font-weight: 700; border-radius: 0.4em;
+  border: 1.5px solid rgba(255,255,255,.35); background: rgba(255,255,255,.06);
+}
+.cockpit-panel .cp-shift.cp-reverse { color: var(--cp-reverse); border-color: rgba(255,69,58,.7); background: rgba(255,69,58,.14); }
+.cockpit-panel .cp-lamps { flex: 1 1 0; display: flex; flex-direction: column; gap: 0.3em; }
+.cockpit-panel .cp-lamp {
+  text-align: center; font-size: 0.9em; font-weight: 600; padding: 0.3em 0;
+  border-radius: 0.5em; border: 1px solid rgba(255,255,255,.16);
+  background: rgba(255,255,255,.08); color: var(--cp-unverified);
+}
+.cockpit-panel .cp-lamp.cp-ready-on { color: var(--cp-ready); border-color: rgba(255,159,10,.75); background: rgba(255,159,10,.22); font-weight: 700; }
+.cockpit-panel .cp-lamp.cp-epedal-on { color: var(--cp-epedal); border-color: rgba(10,132,255,.75); background: rgba(10,132,255,.22); font-weight: 700; }
+.cockpit-panel .cp-chips { display: grid; grid-template-columns: 1fr 1fr; gap: 0.3em; }
+.cockpit-panel .cp-chip {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.3em;
+  background: var(--cp-card2); border-radius: 0.5em; padding: 0.25em 0.45em;
+}
+.cockpit-panel .cp-chip .cp-k { font-size: 0.85em; }
+.cockpit-panel .cp-chip-v { font-size: 1.05em; font-weight: 700; }
+.cockpit-panel .cp-split-bar { margin-top: 0.15em; height: 0.6em; background: var(--cp-rear); border-radius: 0.3em; overflow: hidden; }
+.cockpit-panel .cp-split-bar > i { display: block; height: 100%; width: 0; background: var(--cp-front); }
+.cockpit-panel .cp-split-bar.cp-unverified-bar { background: var(--cp-unverified); }
+.cockpit-panel .cp-split { text-align: center; font-size: 1.05em; font-weight: 700; background: var(--cp-card); border-radius: 0.5em; padding: 0.3em 0; }
+
+/* 俯瞰図は全幅の正方形。縦に余れば上下中央へ置く(リングが潰れないように)。 */
+.cockpit-panel .cp-topview {
+  position: relative; background: #0d0d0f; padding: 0.3em;
+  flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center;
+}
+.cockpit-panel .cp-topview canvas { display: block; width: 100%; aspect-ratio: 1; max-height: 100%; }
+.cockpit-panel .cp-waiting {
+  display: none; position: absolute; inset: 0; align-items: center; justify-content: center;
+  text-align: center; color: var(--cp-muted); font-size: 0.9em;
+}
+.cockpit-panel .cp-waiting.cp-on { display: flex; }
+
+/* ヘッダのトグル。グラフ表示中は既定の見た目、端末画面表示中は強調する。 */
+#cockpit-toggle.active { background: var(--active-bg); border-color: var(--active-border); color: var(--active-text); }
+
+@media (max-width: 760px) {
+  /* 狭い画面では縦積みになる。高さで決めると細くて読めないので幅で決める
+     (スマホは縦にスクロールできるので、縦に長いぶんは問題にならない)。 */
+  #cockpit { width: min(100%, 360px); height: auto; justify-self: center; }
+}

@@ -4,7 +4,7 @@ import { initAuth, signIn, onTokenExpired, getToken, isGranted, silentSignIn, on
 import { findFolderId, listChildren, downloadText, downloadBlobUrl, downloadCanSignals } from "./drive.js";
 import { correctTrack } from "./dead-reckoning.js";
 import { selectDateFolders, partitionDateChildren, groupSessions, buildViewModel, parseSegmentedMeta, buildSegmentPlaylist, csvDurationSec, filterSessionsByDuration } from "./parse.js";
-import { renderViewer } from "./viewer.js";
+import { renderViewer, initCockpitToggle } from "./viewer.js";
 import { buildMediaUrl } from "./media-range.js";
 import { buildPlayback } from "./playback.js";
 import { createSessionPanel } from "./panel.js";
@@ -172,6 +172,8 @@ async function correctTrackInBackground(s, model, viewer, seq) {
     const signals = await downloadCanSignals(s.can, model.startMs);
     if (seq !== opSeq) return; // その間に別のセッションへ切り替わった
     viewer.setMotorTorque(signals);
+    // 端末画面パネルの値(20Hz グリッド)。同じ 1 パスで作られているので追加のダウンロードは無い。
+    viewer.setCockpit(signals.cockpit);
     if (canCorrectTrack) {
       const result = correctTrack(model.track, signals);
       viewer.setCorrection(result ? { state: "ready", result } : { state: "none" });
@@ -207,6 +209,8 @@ function wire() {
   document.getElementById("panel-toggle").addEventListener("click", () => {
     document.getElementById("panel").classList.toggle("closed");
   });
+  // 右枠(グラフ ⇄ 端末画面)の切り替え。前回の選択を復元する。
+  initCockpitToggle();
 }
 
 // 一度許可済みなら、ページを開いただけで無操作の再認証を試す。

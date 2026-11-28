@@ -13,6 +13,7 @@
 <header>
   <h1>T33 Drive ビューア</h1>
   <button id="panel-toggle" type="button" title="記録一覧を開閉">☰ 記録</button>
+  <button id="cockpit-toggle" type="button" title="右枠をグラフと端末画面で切り替える">端末画面</button>
   <button id="login">Google でログイン</button>
   <button id="theme-btn" type="button" class="theme-toggle-btn" title="テーマ切り替え" aria-label="テーマ切り替え">🌙</button>
   <span id="status"></span>
@@ -34,7 +35,9 @@
 </div>
 <div class="mid">
   <video id="video" controls playsinline></video>
+  <!-- 右枠はグラフと端末画面(縦型)の入れ替え。どちらか一方だけが表示される。 -->
   <canvas id="graph"></canvas>
+  <div id="cockpit" class="hidden"></div>
 </div>
 <div id="map" class="nomap"></div>
 </div>
