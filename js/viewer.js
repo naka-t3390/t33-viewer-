@@ -4,7 +4,8 @@ import { computeTimeDomain } from "./timeline.js";
 import { createSessionLifecycle } from "./lifecycle.js";
 import { headingAt, distanceMeters, nearestPassTime } from "./geo.js";
 import { trackToFeatures } from "./dead-reckoning.js";
-import { downsampleTorque } from "./can-signals.js";
+import { downsampleTorque, sampleCockpitAt } from "./can-signals.js";
+import { createCockpitPanel } from "./cockpit-panel.js";
 
 // 非SW フォールバック時の blob URL。次セグメント読込・セッション切替の前に解放する。
 let activeObjectUrl = null;
@@ -56,6 +57,62 @@ const lifecycle = createSessionLifecycle({
   caf: (id) => cancelAnimationFrame(id),
 });
 
+// ─── 端末画面(縦型)パネル ───
+// `.mid` の右枠をグラフと入れ替えて出す(2026-11-28 の所有者指定)。パネルの DOM は
+// セッションをまたいで使い回し、セッション切替では reset() だけ呼ぶ。
+const COCKPIT_STORAGE_KEY = "t33_viewer_right_pane";
+let cockpitPanel = null;
+/** 枠の寸法が変わったときに呼ぶ再計算(最新のセッションの fit)。 */
+let currentFit = null;
+
+function cockpitEl() {
+  return document.getElementById("cockpit");
+}
+
+/** 端末画面を表示しているか。 */
+export function isCockpitVisible() {
+  const el = cockpitEl();
+  return Boolean(el) && !el.classList.contains("hidden");
+}
+
+function applyRightPane(showCockpit) {
+  const cockpit = cockpitEl();
+  const graph = document.getElementById("graph");
+  const btn = document.getElementById("cockpit-toggle");
+  if (!cockpit || !graph) return;
+  cockpit.classList.toggle("hidden", !showCockpit);
+  graph.classList.toggle("hidden", showCockpit);
+  // 端末画面を出している間だけ効く見た目(動画を広げる)を CSS 側へ伝える。
+  document.body.classList.toggle("cockpit-on", showCockpit);
+  if (btn) {
+    btn.classList.toggle("active", showCockpit);
+    btn.textContent = showCockpit ? "グラフ" : "端末画面";
+    btn.title = showCockpit ? "右枠をグラフに戻す" : "右枠を端末画面にする";
+  }
+  if (showCockpit && cockpitPanel) cockpitPanel.resize();
+  // 枠の高さが変わるので、グラフ側の canvas と地図も作り直す。
+  if (currentFit) currentFit();
+}
+
+/**
+ * 右枠の切り替えボタンを 1 度だけ結線する。選択は localStorage に残す。
+ */
+export function initCockpitToggle() {
+  const btn = document.getElementById("cockpit-toggle");
+  // セッションを開く前に切り替えても空の箱にならないよう、先に組み立てておく。
+  const root = cockpitEl();
+  if (root && !cockpitPanel) cockpitPanel = createCockpitPanel(root);
+  let saved = null;
+  try { saved = localStorage.getItem(COCKPIT_STORAGE_KEY); } catch { /* 使えなくても既定で動く */ }
+  applyRightPane(saved === "cockpit");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    const next = !isCockpitVisible();
+    try { localStorage.setItem(COCKPIT_STORAGE_KEY, next ? "cockpit" : "graph"); } catch { /* 保存できなくても切替は効く */ }
+    applyRightPane(next);
+  });
+}
+
 export function renderViewer(model, playback) {
   const { samples, graph, warnings } = model;
   // 表示中の軌跡。生の GPS で始まり、CAN による補正が済めば差し替わる(setCorrection)。
@@ -64,6 +121,13 @@ export function renderViewer(model, playback) {
   const video = document.getElementById("video");
 
   document.getElementById("warnings").textContent = (warnings || []).join("  /  ");
+
+  // 端末画面パネルは DOM を使い回す。セッションが変わったら PEAK と残像だけ捨てる。
+  const cockpitRoot = cockpitEl();
+  if (cockpitRoot) {
+    if (!cockpitPanel) cockpitPanel = createCockpitPanel(cockpitRoot);
+    cockpitPanel.reset();
+  }
 
   // 前セッションの blob を解放してから、この世代の再生状態を構築する。
   revokeActiveObjectUrl();
@@ -377,6 +441,14 @@ export function renderViewer(model, playback) {
     torqueAxis = niceMax(maxAbs);
     draw(globalTime());
   }
+  // 端末画面パネル用の 20Hz グリッド。CAN を読み終わってから流し込まれる。
+  let cockpitGrid = null;
+  function setCockpit(grid) {
+    cockpitGrid = grid || null;
+    if (cockpitPanel && isCockpitVisible()) {
+      cockpitPanel.update(sampleCockpitAt(cockpitGrid, globalTime()), globalTime());
+    }
+  }
   const mmss = (s) => { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
   const xAt = (t, P) => P.x + (t - tMin) / ((tMax - tMin) || 1) * P.w;
 
@@ -458,7 +530,14 @@ export function renderViewer(model, playback) {
     }
     draw(globalTime());
   };
-  function fit() { cv.width = cv.clientWidth; cv.height = cv.clientHeight; if (lmap) lmap.resize(); draw(globalTime()); }
+  function fit() {
+    cv.width = cv.clientWidth;
+    cv.height = cv.clientHeight;
+    if (lmap) lmap.resize();
+    if (cockpitPanel) cockpitPanel.resize();
+    draw(globalTime());
+  }
+  currentFit = fit; // 右枠の切り替えでもこの世代の fit を呼べるようにする
 
   const fmt = (v) => (v == null ? "--" : Math.round(v * 10) / 10);
   function update() {
@@ -478,6 +557,11 @@ export function renderViewer(model, playback) {
       if (j >= 0) lmarker.setLngLat([track[j].lon, track[j].lat]);
     }
     applyMapView(t); // ヘッドアップ時は自車追従+回転を適用(ノースアップ時は no-op)
+    // 端末画面は表示しているときだけ描く(隠れている間は CPU を使わない)。
+    // 地図のマーカーとグラフのカーソルと同じ t を渡すので、必ず同じ時刻を指す。
+    if (cockpitPanel && isCockpitVisible()) {
+      cockpitPanel.update(sampleCockpitAt(cockpitGrid, t), t);
+    }
     draw(t);
     // 再スケジュールは lifecycle.restartLoop が一元管理する(多重ループ防止)。
   }
@@ -506,5 +590,7 @@ export function renderViewer(model, playback) {
   fit();
 
   lifecycle.restartLoop(update); // 前回セッションのループを止めてから開始する
-  return { setCorrection, setMotorTorque };
+  // seekToGlobal は本番ではグラフ/地図のクリックから呼ばれる。外へも出しておくと、
+  // 開発ハーネスが動画要素を直接触らずに(= currentSeg を壊さずに)時刻を指定できる。
+  return { setCorrection, setMotorTorque, setCockpit, seekToGlobal };
 }

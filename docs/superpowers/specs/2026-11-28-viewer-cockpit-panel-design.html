@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>T33 Drive ビューア — 端末縦型画面の再現パネル 設計書 (2026-11-28)</title>
+<style>
+  /* 白背景で固定する。ダークモードへの追従は入れない(2026-11-21 の指示)。 */
+  :root { color-scheme: light; }
+  body { margin:0 auto; padding:24px 20px 80px; background:#ffffff; color:#1f2328;
+         font-family:-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif; line-height:1.75;
+         max-width:980px; }
+  h1 { font-size:1.6rem; border-bottom:3px solid #c9a227; padding-bottom:8px; margin-top:0; }
+  h2 { font-size:1.22rem; margin-top:2.2em; border-left:6px solid #c9a227; padding-left:10px; }
+  h3 { font-size:1.04rem; margin-top:1.6em; color:#4a3f1f; }
+  table { border-collapse:collapse; width:100%; margin:12px 0; font-size:.92rem; }
+  th, td { border:1px solid #ddd8c8; padding:6px 9px; text-align:left; vertical-align:top; }
+  th { background:#f6f2e6; white-space:nowrap; }
+  code { background:#f4f4f2; border:1px solid #e5e5e0; border-radius:4px; padding:1px 5px;
+         font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.9em; }
+  pre { background:#f8f8f6; border:1px solid #e5e5e0; border-radius:8px; padding:12px 14px;
+        overflow-x:auto; font-size:.86rem; line-height:1.6; }
+  pre code { background:none; border:none; padding:0; }
+  .note { background:#fffaf0; border-left:5px solid #e0a800; padding:10px 14px; margin:14px 0; }
+  .warn { background:#fff5f5; border-left:5px solid #d64545; padding:10px 14px; margin:14px 0; }
+  .ok { background:#f3faf4; border-left:5px solid #2f9e4f; padding:10px 14px; margin:14px 0; }
+  ul, ol { padding-left:1.5em; }
+  .meta { color:#6b6353; font-size:.88rem; }
+</style>
+</head>
+<body>
+
+<h1>T33 Drive ビューア — 端末縦型画面の再現パネル</h1>
+<p class="meta">設計書 / 2026-11-28 / 対象リポジトリ <code>t33-viewer</code>(ブランチ <code>feat/cockpit-panel</code>)</p>
+
+<h2>1. 目的</h2>
+<p>
+ビューアで走行セッションを開いたとき、<strong>KYV46 端末の記録中(縦向き)画面と同じものを、
+動画・地図と同期して</strong>見られるようにする。走行の映像と、そのときモーター・電池・
+シフトがどうだったかを、端末の画面と同じ並びで突き合わせられるのが狙いである。
+</p>
+<p>
+再現の元は端末アプリ <code>T33Monitor</code> の <code>ui/dashboard/DashboardScreen.kt</code> の
+<code>RecordingDashboardPortrait</code>(main にマージ済み)。信号の読み方の出どころは
+<code>data/can/CanSignalSpec.kt</code> ただ一つで、<strong>係数・符号・ビット幅はそれと 1 対 1 で移植する</strong>。
+独自解釈は持ち込まない。
+</p>
+
+<h2>2. 時刻合わせ(ここを間違えると全部ずれる)</h2>
+<p>
+基準は <code>_video.json</code> の最初の <code>segments[].start_ms</code>。ビューアは既にこれを
+<code>startMs</code> として持っている(<code>js/parse.js</code> の <code>buildViewModel</code>)。
+CAN ログの 1 行の時刻は
+</p>
+<pre><code>t[秒] = (timestamp_ms - startMs) / 1000</code></pre>
+<p>
+再生位置は <code>js/viewer.js</code> の <code>globalTime()</code> = 現セグメントの <code>baseOffsetSec</code> +
+<code>video.currentTime</code>。地図のマーカーとグラフのカーソルがこれで動いているので、
+パネルも同じ <code>globalTime()</code> を使う。GPS の時刻は端末の時計と約 5 秒ずれるので、
+<strong>同期の基準には使わない</strong>。
+</p>
+
+<div class="ok">
+<p><strong>検算(2026-11-28 セッション 102230、<code>startMs</code>=1795828951258)</strong></p>
+<table>
+<tr><th>検算項目</th><th>区間</th></tr>
+<tr><td>前モータ回転 <code>1DA</code> が −5 rpm 未満(後退)</td><td>599.88 〜 617.00 s</td></tr>
+<tr><td>シフトが R(<code>1D4</code> b5 の bit1-2 == 1)</td><td>600.21 〜 618.01 s(17.8 秒)</td></tr>
+</table>
+<p>
+二つが 0.3〜1.0 秒以内で一致するので、この時刻基準は正しい。
+<strong>この一致を回帰テストに固定する</strong>(合成フィクスチャで同じ形を作る)。
+</p>
+</div>
+
+<h2>3. 性能の制約と間引きの方針</h2>
+<p>
+CAN ログは 1 セッションで 250〜360 万フレーム(平文 90〜134MB)。ブラウザで全部を
+オブジェクト配列に持つことはできない。
+</p>
+<ul>
+<li><strong>ダウンロードは増やさない。</strong> 既に軌跡補正(<code>dead-reckoning.js</code>)のために
+  CAN ログを 1 回落としてストリーミング解析している(<code>js/can-signals.js</code> の
+  <code>parseCanSignalsFromBuffer</code>)。その<strong>同じ 1 パスの中で</strong>パネル用の信号も拾う。</li>
+<li><strong>20Hz のグリッドへ間引く。</strong> 端末は CAN スナップショットを 50ms ごとに公開しているので、
+  20Hz が端末と同じ刻みになる。各バケットは<strong>平均ではなく最終値</strong>を採る
+  (平均するとトルクの山が鈍り、端末の表示と変わってしまう)。</li>
+<li><strong>10Hz の信号は前値保持。</strong> SOC・水温・油温・吸気温・エンジン負荷は 10Hz なので、
+  20Hz グリッドでは 1 つ飛びになる。端末も最後に来た CAN 値を保持して表示しているので、
+  同じく前値を保持する。値が一度も来ていない区間は <code>NaN</code> のままにして
+  「未取得」と区別する。</li>
+<li><strong>列ごとの <code>Float32Array</code> で持つ。</strong> 630 秒 × 20Hz = 12,600 行 ×
+  18 列 ≒ 0.9MB。オブジェクト配列(1 行 1 オブジェクト)にはしない。</li>
+<li><strong>ID の判定は整数キーの <code>switch</code>。</strong> 18 個の ID を
+  <code>startsWith</code> の連鎖で判定すると 1 行ごとに最大 18 回の比較が走る。
+  3 文字を文字コードから整数キーにして 1 回の <code>switch</code> で分岐する。</li>
+</ul>
+
+<h2>4. 再現する値と読み方(CanSignalSpec.kt と 1 対 1)</h2>
+<table>
+<tr><th>表示</th><th>ID</th><th>バイト</th><th>読み方</th><th>備考</th></tr>
+<tr><td>前モータートルク</td><td><code>1D4</code></td><td>b2-3</td><td>上位 12bit 符号付き × 0.125 Nm</td><td>駆動が正、回生が負</td></tr>
+<tr><td>後モータートルク</td><td><code>1BC</code></td><td>b2-3</td><td>上位 12bit 符号付き × 0.125 Nm</td><td>同じ</td></tr>
+<tr><td>前モータ回転</td><td><code>1DA</code></td><td>b4-5</td><td>符号付き 16bit × 0.5 rpm</td><td>前進が正、<strong>後退が負</strong></td></tr>
+<tr><td>後モータ回転</td><td><code>1CE</code></td><td>b4-5</td><td>符号付き 16bit × 0.5 rpm</td><td>同じ</td></tr>
+<tr><td>電池電圧</td><td><code>1DB</code></td><td>b2-3</td><td>上位 10bit × 0.5 V</td><td>停車 IGN ON で 354.0V</td></tr>
+<tr><td>電池電流</td><td><code>1DB</code></td><td>b0-1</td><td>上位 11bit 符号付き × 0.5 A</td><td><strong>負が放電・正が回生</strong></td></tr>
+<tr><td>SOC</td><td><code>55B</code></td><td>b0-1</td><td>上位 10bit × 0.1 %</td><td>10Hz</td></tr>
+<tr><td>発電エンジン回転</td><td><code>191</code></td><td>b5-6</td><td>u16 ÷ 5.1207 rpm</td><td></td></tr>
+<tr><td>車速</td><td><code>29A</code></td><td>b4-5</td><td>u16 ÷ 102.086 km/h</td><td>50Hz</td></tr>
+<tr><td>シフト位置</td><td><code>1D4</code></td><td>b5</td><td>bit1-2: 0=N / 1=R / 2=D / 3=P</td><td>100Hz</td></tr>
+<tr><td>READY</td><td><code>1D4</code></td><td>b5</td><td>bit6</td><td></td></tr>
+<tr><td>e-Pedal</td><td><code>47A</code></td><td>b1</td><td>bit3(0x08)</td><td>候補。実車スイッチ未確認</td></tr>
+<tr><td>冷却水温</td><td><code>50F</code></td><td>b1</td><td>u8 − 40 ℃</td><td>10Hz</td></tr>
+<tr><td>吸気温</td><td><code>50F</code></td><td>b5</td><td>u8 − 50 ℃</td><td>10Hz</td></tr>
+<tr><td>エンジン油温</td><td><code>4B0</code></td><td>b0</td><td>u8 − 30 ℃</td><td>10Hz</td></tr>
+<tr><td>エンジン負荷</td><td><code>41A</code></td><td>b3-4</td><td>(u16 − 31) × 0.0122、0〜100 でクランプ</td><td>10Hz</td></tr>
+<tr><td>舵角(俯瞰図用)</td><td><code>141</code></td><td>b2-3</td><td>(u16 − 32768) × 0.0434 度</td><td><strong>左が正、右が負</strong></td></tr>
+<tr><td>前後G 生値(俯瞰図用)</td><td><code>0B4</code></td><td>b2-3</td><td>u16(中心 31959)</td><td>未校正。向きだけに使う</td></tr>
+<tr><td>四輪速(俯瞰図用)</td><td><code>289</code>/<code>28A</code></td><td>下記</td><td>u16 ÷ 180.2 km/h</td><td>50Hz</td></tr>
+</table>
+<p>四輪の割り当て(<code>WHEEL_SPEED_SOURCES</code> のとおり): FL=<code>289</code> b2-3 / FR=<code>289</code> b4-5 /
+RL=<code>28A</code> b2-3 / RR=<code>28A</code> b0-1。<code>28A</code> b4-5 は車輪速ではない。</p>
+
+<h3>派生値(端末と同じ式)</h3>
+<ul>
+<li><strong>モーター出力</strong> kW = トルク[Nm] × |回転[rpm]| ÷ 9549(<code>cockpitModelOf</code>)</li>
+<li><strong>前後配分</strong> = |前トルク| : |後トルク| の百分率。<strong>両方 0 のときは 0 : 0</strong>
+  (データが無いだけなのに「50:50 で配分されている」と見せないため)</li>
+<li><strong>電池電力</strong> kW = 電圧 × 電流 ÷ 1000。符号はそのまま(負が放電)</li>
+</ul>
+
+<div class="warn">
+<p><strong>未解決: 12bit の上限がカタログ値に届かない。</strong>
+12bit 符号付きの上限 ±2047 カウント = ±255.9 Nm が、公称のフロントモータートルク(330Nm 級)に
+足りない。2026-11-28 の実測は前 +62.75 Nm までで、飽和まで大きな余裕があり、どちらが起きるかは
+まだ見えていない。<strong>係数には手を入れない。</strong>|トルク| が 250 Nm を超えたときだけ
+パネル側で飽和の疑いを示す印を出す。</p>
+</div>
+
+<h2>5. 表示の約束(端末と同じ)</h2>
+<p>
+端末は「裏付けのない値を数字らしく見せない」約束を持っている(<code>CockpitValue.verified</code>、
+色は <code>T33Colors.Unverified</code>)。パネルも同じにする。
+</p>
+<ul>
+<li>CAN から取れていない値は <strong>0 か <code>---</code> をグレー</strong>で描く</li>
+<li>前後モーターは、トルクと回転がどちらも 0 の間は「取れていない」とみなしてグレー</li>
+<li>シフトが未取得なら <code>-</code>、READY / e-Pedal は消灯</li>
+<li>再生位置が CAN ログの範囲外(記録開始前・CAN が落ちた後)なら、全体をグレーにして
+  「CAN なし」と出す。もっともらしい値を置かない</li>
+</ul>
+
+<h2>6. 画面の置き場所</h2>
+<p>
+<code>.mid</code> の<strong>右枠(いまグラフがある場所)をグラフと端末画面で切り替える</strong>
+(2026-11-28 の所有者指定)。ヘッダ横のボタンで切り替え、選択は <code>localStorage</code> に残す。
+</p>
+<pre><code>.mid  [ 動画 16:9 / 42vh ][ グラフ ⇄ 端末画面(縦 9:19.5) ]
+#map  [ 全幅。残りの縦を吸収 ]</code></pre>
+<ul>
+<li>端末画面は <strong>9 : 19.5</strong>(KYV46 の画面比)を保ち、枠の中で中央に置く。
+  高さは <code>clamp(420px, 68vh, 760px)</code>。<code>.mid</code> の行が伸びたぶんは
+  <code>#map</code>(<code>flex:1</code>)が吸収する</li>
+<li>760px 以下(スマホ)では既存のとおり縦積みになり、動画の下に来る</li>
+<li><strong>配色は端末と同じ暗色で固定</strong>し、ビューアのテーマには追従させない。
+  端末画面の再現なので、明るいテーマの中でも「端末の画面」として読めるほうがよい</li>
+<li>グラフに戻せば、グラフのクリックによるシーク(既存機能)はそのまま使える</li>
+</ul>
+
+<h2>7. e-4ORCE 俯瞰図</h2>
+<p>端末の <code>ui/e4orce/E4orceTopView.kt</code> の <code>drawTopView</code> を Canvas 2D へ移植する。</p>
+<ul>
+<li><strong>リング</strong>と目盛り。四輪はリング上の 225/315/135/45 度に置く</li>
+<li><strong>四輪の弧</strong>: 実測の車輪速から幾何で決まるぶん(<code>ackermannFactors</code>)を引いた残り
+  (スリップ)を、その輪の位置から力の向きへ伸びる弧で描く。内輪がオレンジ、外輪が薄い青。
+  弧の長さと太さ、タイヤの大きさが力の強さを表す</li>
+<li><strong>車体</strong>は真上から見た T33 のシルエット(輪郭の座標列をそのまま移植)</li>
+<li><strong>重心ポイント</strong>(赤)と<strong>残像</strong>:
+  <ul>
+    <li>横方向 = 旋回横G <code>v² / (R · g)</code>。<code>R</code> は舵角から
+      <code>WHEELBASE_M / tan(舵角 / 17.3)</code>。0.35G で振り切れる。
+      左旋回(舵角が正)で右(+x)へ寄る</li>
+    <li>前後方向 = <code>(0B4 の生値 − 31959) / 3500</code>。加速で後ろ(+y)、減速で前(−y)</li>
+    <li>合成ベクトルの長さは 1.0 に収める。可動範囲はリング半径の 0.58 倍</li>
+    <li>残像は 1,400ms 保持・33ms 間隔で記録し、残り寿命の 2 乗で薄く小さくなる</li>
+  </ul>
+</li>
+</ul>
+<div class="note">
+<p>
+端末では残像は「実時間が進むたび」に記録される。ビューアは<strong>再生位置の時刻</strong>で
+記録するので、早送り・巻き戻し・シークでも軌跡が正しく付いていく
+(時刻が巻き戻ったらバッファを捨てる。端末の <code>CenterOfGravityTrail</code> と同じ扱い)。
+</p>
+</div>
+
+<h2>8. 作るもの・変えるもの</h2>
+<table>
+<tr><th>ファイル</th><th>区分</th><th>中身</th></tr>
+<tr><td><code>js/can-signals.js</code></td><td>変更</td><td>18 ID 対応、20Hz グリッド(<code>Float32Array</code> 列)、前値保持、<code>cockpitAt(t)</code> サンプラ。<strong>既存の戻り値 <code>{speed, yaw, frontTorque, rearTorque}</code> は形を変えず</strong> <code>cockpit</code> を足す</td></tr>
+<tr><td><code>js/cockpit-model.js</code></td><td>新規</td><td>デコード単位関数群と表示モデル(<code>cockpitModelOf</code> 相当。文字列と <code>verified</code>)</td></tr>
+<tr><td><code>js/e4orce-topview.js</code></td><td>新規</td><td>俯瞰図の幾何と Canvas 描画、重心と残像</td></tr>
+<tr><td><code>js/cockpit-panel.js</code></td><td>新規</td><td>パネルの DOM 構築と毎フレームの更新、グラフとの切り替え</td></tr>
+<tr><td><code>js/viewer.js</code></td><td>変更</td><td><code>update()</code> からパネルを更新。戻り値に <code>setCockpit</code> を追加</td></tr>
+<tr><td><code>js/app.js</code></td><td>変更</td><td>CAN 読み込み完了時に <code>setCockpit</code> へ流し込む(<code>setMotorTorque</code> と同じ口)</td></tr>
+<tr><td><code>index.html</code> / <code>css/style.css</code></td><td>変更</td><td>パネルの枠と切り替えボタン</td></tr>
+<tr><td><code>_verify_cockpit.html</code></td><td>新規</td><td>ローカルのセッションフォルダをファイル選択で読み、Drive ログイン無しで実データ照合する開発ハーネス</td></tr>
+<tr><td><code>tests/*.test.js</code></td><td>追加</td><td>下記</td></tr>
+</table>
+
+<h2>9. テスト戦略</h2>
+<h3>ユニットテスト(<code>node --test</code>)</h3>
+<ul>
+<li><strong>デコード</strong>(表駆動): 12bit 符号付きトルク、s16 回転の負値、上位 10bit 電圧、
+  上位 11bit 符号付き電流(負が放電)、SOC、発電回転 ÷5.1207、車速 ÷102.086、
+  水温 −40 / 油温 −30 / 吸気 −50、負荷のクランプ、シフトの 4 値、READY、e-Pedal、
+  舵角の左正・右負、四輪の割り当て</li>
+<li><strong>ストリーミングの境界</strong>: 行の途中・CRLF・壊れた 16 進・29bit 拡張 ID・
+  データ長不足で取りこぼさない / 取り違えない</li>
+<li><strong>グリッドとサンプラ</strong>: バケット最終値、前値保持、一度も来ていない区間は
+  <code>NaN</code>、範囲外の <code>t</code> では「CAN なし」</li>
+<li><strong>時刻合わせの回帰</strong>: 600 秒から R + 前回転が負のフィクスチャで、
+  <code>cockpitAt(600.5)</code> が R、<code>cockpitAt(590)</code> が D</li>
+<li><strong>表示モデル</strong>: kW の式、前後配分が両方 0 で 0:0、未取得がグレー</li>
+<li><strong>俯瞰図の幾何</strong>: 弧の長さ・太さ・タイヤ倍率・重心オフセット(左旋回で +x、
+  加速で +y)・残像の減衰。端末側の Kotlin テストと同じ期待値をミラーする</li>
+</ul>
+<h3>実データ照合(done の定義)</h3>
+<ol>
+<li><code>_verify_cockpit.html</code> で <code>log/20261128/094619/</code> と
+  <code>log/20261128/102230/</code> を読み、<strong>JS モジュールの出す値を独立実装
+  (Python)の値と突き合わせる</strong>(全区間の min/max と代表時刻)</li>
+<li>同じハーネスで <code>t = 600s</code> 付近を再生し、<strong>シフト R・前後回転が負</strong>が
+  パネルに出ることを目視(スクリーンショット)で確認</li>
+<li>動画を再生して、パネルの値・地図のマーカー・グラフのカーソルが同じ時刻で動くことを確認</li>
+</ol>
+
+<h2>10. やらないこと</h2>
+<ul>
+<li>端末アプリ(<code>Torque2</code>)側のコードは変更しない</li>
+<li>トルク係数 0.125 Nm/count には手を入れない(12bit 上限の矛盾は未解決のまま残す)</li>
+<li>094619 の CAN が gz 化されていない(平文 134MB)件は今回直さない。
+  既存の軌跡補正でも同じ量を落としているため、別の作業として分ける</li>
+<li>OBD 由来の CSV(<code>t33_&lt;時刻&gt;.csv</code>)の表示は今のゲージ帯のまま変えない</li>
+</ul>
+
+</body>
+</html>
