@@ -588,5 +588,7 @@ export function renderViewer(model, playback) {
   fit();
 
   lifecycle.restartLoop(update); // 前回セッションのループを止めてから開始する
-  return { setCorrection, setMotorTorque, setCockpit };
+  // seekToGlobal は本番ではグラフ/地図のクリックから呼ばれる。外へも出しておくと、
+  // 開発ハーネスが動画要素を直接触らずに(= currentSeg を壊さずに)時刻を指定できる。
+  return { setCorrection, setMotorTorque, setCockpit, seekToGlobal };
 }

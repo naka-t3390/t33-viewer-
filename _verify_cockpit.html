@@ -5,56 +5,83 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>端末画面パネルの実データ照合ハーネス</title>
 <link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css"
+      integrity="sha384-uTttxo/aOKbdE5RlD/SPzSDoDmNvGlUYPjONi2MN/b7c9HPSvW07OIuyP7uL6jxK"
+      crossorigin="anonymous">
 <style>
-  /* 開発用ハーネス。白背景で固定(ダークモード追従なし)。 */
-  :root { color-scheme: light; }
-  body { background: #fff; color: #1f2328; padding: 12px; }
-  .vh-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
-  .vh-bar input[type="text"] { width: 30em; font: inherit; padding: 4px 6px; }
+  /* 開発用ハーネス。Drive ログイン無しで、ローカルのセッションを本番と同じ
+     renderViewer に通す(地図・グラフ・端末画面が同じ時刻で動くことまで見る)。 */
+  .vh-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; }
+  .vh-bar input[type="text"] { width: 28em; font: inherit; padding: 4px 6px; }
   .vh-bar input[type="number"] { width: 7em; font: inherit; padding: 4px 6px; }
-  .vh-main { display: flex; gap: 14px; align-items: flex-start; }
-  .vh-main video { width: 520px; height: auto; background: #000; border-radius: 8px; }
-  #cockpit { height: 720px; }
   .vh-out { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre;
-            background: #f8f8f6; border: 1px solid #e5e5e0; border-radius: 8px;
-            padding: 10px; margin-top: 10px; overflow-x: auto; }
-  .vh-status { color: #6b6353; font-size: .9rem; }
+            background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px;
+            padding: 10px; margin: 8px 12px; max-height: 40vh; overflow: auto; }
 </style>
 </head>
 <body>
+<header>
+  <h1>端末画面パネルの照合</h1>
+  <button id="cockpit-toggle" type="button" title="右枠をグラフと端末画面で切り替える">端末画面</button>
+  <span id="status"></span>
+</header>
 
 <div class="vh-bar">
   <label>セッションの接頭辞
     <input type="text" id="prefix" value="/log/102230/t33_20261128_102230">
   </label>
   <button id="load" type="button">読み込む</button>
-  <label>t(秒) <input type="number" id="seek" value="600.5" step="0.1"></label>
+  <label>t(秒) <input type="number" id="seek" value="604" step="0.1"></label>
   <button id="go" type="button">その時刻へ</button>
-  <button id="stats" type="button">全区間の min/max を出す</button>
-  <span class="vh-status" id="status"></span>
+  <button id="stats" type="button">全区間の min/max</button>
 </div>
 
-<div class="vh-main">
+<div class="layout">
+<div class="main">
+<div id="error"></div>
+<div id="warnings" class="warn"></div>
+<div class="gaugebar">
+  <div class="gauge"><span class="k">速度</span><span class="v" id="g-speed">--</span><span class="u">km/h</span></div>
+  <div class="gauge"><span class="k">回転</span><span class="v" id="g-rpm">--</span><span class="u">rpm</span></div>
+  <div class="gauge"><span class="k">水温</span><span class="v" id="g-coolant">--</span><span class="u">℃</span></div>
+  <div class="gauge"><span class="k">スロットル</span><span class="v" id="g-throttle">--</span><span class="u">%</span></div>
+  <div class="gauge"><span class="k">HV状態</span><span class="v" id="g-hv">--</span></div>
+  <div class="gauge"><span class="k">時刻</span><span class="v" id="g-time">0.0</span><span class="u">s</span></div>
+</div>
+<div class="mid">
   <video id="video" controls playsinline></video>
-  <div id="cockpit"></div>
+  <canvas id="graph"></canvas>
+  <div id="cockpit" class="hidden"></div>
+</div>
+<div id="map" class="nomap"></div>
+</div>
 </div>
 
 <div class="vh-out" id="out">セッションの接頭辞を入れて「読み込む」を押す。
-CAN ログ(_can.csv / _can.csv.gz)・_video.json・連番 mp4 を同じ接頭辞から取る。</div>
+CAN ログ(_can.csv / _can.csv.gz)・_video.json・KML・走行CSV・連番 mp4 を同じ接頭辞から取る。</div>
 
+<script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"
+        integrity="sha384-5+cfbwT0iiub6VsQAdn6yz16nr6sDiQoHx6tm4O8OVYXHYOxcffFmCJBL0dgdvGp"
+        crossorigin="anonymous"></script>
 <script type="module">
-import { parseCanSignalsFromBuffer, sampleCockpitAt, COCKPIT_COLS } from "./js/can-signals.js";
-import { createCockpitPanel } from "./js/cockpit-panel.js";
+import { initTheme } from "./js/theme.js";
+import { parseCanSignalsFromBuffer, COCKPIT_COLS } from "./js/can-signals.js";
+import { buildViewModel, parseSegmentedMeta, buildSegmentPlaylist } from "./js/parse.js";
+import { buildPlayback } from "./js/playback.js";
+import { renderViewer, initCockpitToggle } from "./js/viewer.js";
+import { correctTrack } from "./js/dead-reckoning.js";
 
 const $ = (id) => document.getElementById(id);
 const out = (text) => { $("out").textContent = text; };
-const status = (text) => { $("status").textContent = text; };
+const setStatus = (text) => { $("status").textContent = text; };
 
-const video = $("video");
-const panel = createCockpitPanel($("cockpit"));
 let grid = null;
-let segments = []; // [{url, baseOffsetSec}]
-let currentSeg = -1;
+let viewer = null;
+let segments = [];
+const video = $("video");
+
+initTheme();
+initCockpitToggle();
 
 /** 最初に見つかった URL を返す。全部 404 なら null。 */
 async function firstAvailable(urls) {
@@ -67,84 +94,84 @@ async function firstAvailable(urls) {
   return null;
 }
 
+const textOr = async (url, fallback = "") => {
+  const res = await fetch(url);
+  return res.ok ? res.text() : fallback;
+};
+
 async function load() {
   const prefix = $("prefix").value.trim();
+  const dir = prefix.replace(/[^/]+$/, "");
   grid = null;
-  panel.reset();
-  status("_video.json を読み込み中…");
-  const metaRes = await fetch(`${prefix}_video.json`);
-  if (!metaRes.ok) { out(`_video.json が取れない: ${metaRes.status}`); return; }
-  const meta = await metaRes.json();
-  const startMs = meta.segments?.[0]?.start_ms ?? meta.video_start_ms;
+  setStatus("読み込み中…");
 
-  segments = (meta.segments || []).map((s) => ({
-    url: `${prefix.replace(/[^/]+$/, "")}${s.file}`,
-    baseOffsetSec: (s.start_ms - startMs) / 1000,
-  }));
+  const jsonText = await textOr(`${prefix}_video.json`);
+  if (!jsonText) { out("_video.json が取れない"); return; }
+  const csvText = await textOr(`${prefix}.csv`);
+  const kmlText = await textOr(`${prefix}.kml`);
 
-  status("CAN ログを読み込み中…");
+  // 本番(app.js)と同じ組み立て。id の代わりにローカル URL をそのまま渡す。
+  const meta = parseSegmentedMeta(jsonText);
+  const mp4s = (meta.segments || []).map((s) => ({ id: `${dir}${s.file}`, name: s.file }));
+  segments = buildSegmentPlaylist(mp4s, meta);
+  const playback = buildPlayback(segments, {
+    swStreaming: true,
+    sendToken: async () => true,
+    buildMediaUrl: (id) => id,
+    downloadBlobUrl: (id) => id,
+  });
+
+  const model = buildViewModel(csvText, kmlText, jsonText, mp4s.length > 0);
+  viewer = renderViewer(model, playback);
+  setStatus("CAN を読み込み中…");
+
   const canUrl = await firstAvailable([`${prefix}_can.csv.gz`, `${prefix}_can.csv`]);
   if (!canUrl) { out("CAN ログが取れない(_can.csv.gz / _can.csv)"); return; }
   const t0 = performance.now();
   const buf = await (await fetch(canUrl)).arrayBuffer();
   const fetched = performance.now();
-  const signals = await parseCanSignalsFromBuffer(buf, startMs);
+  const signals = await parseCanSignalsFromBuffer(buf, model.startMs);
   const parsed = performance.now();
   grid = signals.cockpit;
+  viewer.setMotorTorque(signals);
+  viewer.setCockpit(grid);
+  if (model.track.length >= 2) {
+    const corrected = correctTrack(model.track, signals);
+    viewer.setCorrection(corrected ? { state: "ready", result: corrected } : { state: "none" });
+  }
 
-  out(
-    [
-      `CAN: ${canUrl}  ${(buf.byteLength / 1e6).toFixed(1)} MB`,
-      `startMs(=_video.json の最初の segment.start_ms): ${startMs}`,
-      `取得 ${(fetched - t0).toFixed(0)} ms / 解析 ${(parsed - fetched).toFixed(0)} ms`,
-      `グリッド: ${grid.rows} 行 × ${grid.colCount} 列 (${grid.hz}Hz, ` +
-        `${((grid.rows * grid.colCount * 4) / 1e6).toFixed(2)} MB) ` +
-        `firstRow=${grid.firstRow} lastRow=${grid.lastRow} ` +
-        `= ${(grid.firstRow / grid.hz).toFixed(2)}〜${(grid.lastRow / grid.hz).toFixed(2)} 秒`,
-      `100Hz 配列: speed=${signals.speed.length} yaw=${signals.yaw.length} ` +
-        `frontTorque=${signals.frontTorque.length} rearTorque=${signals.rearTorque.length}`,
-      `セグメント: ${segments.map((s) => `${s.baseOffsetSec.toFixed(3)}s`).join(" / ")}`,
-    ].join("\n")
-  );
-  status("読み込み完了");
+  out([
+    `CAN: ${canUrl}  ${(buf.byteLength / 1e6).toFixed(1)} MB`,
+    `startMs(=_video.json の最初の segment.start_ms): ${model.startMs}`,
+    `取得 ${(fetched - t0).toFixed(0)} ms / 解析 ${(parsed - fetched).toFixed(0)} ms`,
+    `グリッド: ${grid.rows} 行 × ${grid.colCount} 列 (${grid.hz}Hz, ` +
+      `${((grid.rows * grid.colCount * 4) / 1e6).toFixed(2)} MB) ` +
+      `= ${(grid.firstRow / grid.hz).toFixed(2)}〜${(grid.lastRow / grid.hz).toFixed(2)} 秒`,
+    `100Hz 配列: speed=${signals.speed.length} yaw=${signals.yaw.length} ` +
+      `frontTorque=${signals.frontTorque.length} rearTorque=${signals.rearTorque.length}`,
+    `走行CSV ${model.samples.length} 行 / KML ${model.track.length} 点 / ` +
+      `セグメント ${segments.map((s) => `${s.baseOffsetSec}s`).join(" / ")}`,
+  ].join("\n"));
+  setStatus("読み込み完了");
   seekTo(Number($("seek").value) || 0);
 }
 
-/** グローバル時刻 t(秒)の位置へ動画を合わせる。 */
+/**
+ * グローバル時刻 t(秒)へ移動する。
+ *
+ * **動画要素を直接触らない。** viewer が持つセグメント管理(currentSeg)を壊すと、
+ * 再生位置の計算がずれて「同期できていない」ように見えてしまう。本番でグラフや
+ * 地図のクリックが使うのと同じ入口を通す。
+ */
 function seekTo(t) {
-  if (segments.length === 0) return;
-  let idx = 0;
-  for (let i = 0; i < segments.length; i++) if (segments[i].baseOffsetSec <= t) idx = i;
-  const local = t - segments[idx].baseOffsetSec;
-  if (idx !== currentSeg) {
-    currentSeg = idx;
-    video.src = segments[idx].url;
-    video.load();
-    video.addEventListener("loadedmetadata", () => { video.currentTime = Math.max(0, local); }, { once: true });
-  } else {
-    video.currentTime = Math.max(0, local);
-  }
-}
-
-/** 再生位置のグローバル時刻。 */
-function globalTime() {
-  if (currentSeg < 0) return 0;
-  return segments[currentSeg].baseOffsetSec + (video.currentTime || 0);
-}
-
-function loop() {
-  const t = globalTime();
-  panel.update(sampleCockpitAt(grid, t), t);
-  requestAnimationFrame(loop);
+  if (viewer) viewer.seekToGlobal(t);
 }
 
 /** 全区間の min/max。独立実装(Python)の結果と突き合わせるために出す。 */
 function printStats() {
   if (!grid) { out("先に読み込む"); return; }
-  const names = Object.keys(COCKPIT_COLS);
-  const rows = [`${"列".padEnd(14)} ${"件数".padStart(8)} ${"min".padStart(11)} ${"max".padStart(11)}`];
-  for (const name of names) {
-    const col = COCKPIT_COLS[name];
+  const lines = [`${"列".padEnd(14)} ${"件数".padStart(8)} ${"min".padStart(11)} ${"max".padStart(11)}`];
+  for (const [name, col] of Object.entries(COCKPIT_COLS)) {
     let n = 0, lo = Infinity, hi = -Infinity;
     for (let row = 0; row < grid.rows; row++) {
       const v = grid.data[row * grid.colCount + col];
@@ -153,46 +180,31 @@ function printStats() {
       if (v < lo) lo = v;
       if (v > hi) hi = v;
     }
-    rows.push(
-      `${name.padEnd(14)} ${String(n).padStart(8)} ` +
-        `${(n ? lo.toFixed(2) : "-").padStart(11)} ${(n ? hi.toFixed(2) : "-").padStart(11)}`
-    );
+    lines.push(`${name.padEnd(14)} ${String(n).padStart(8)} ` +
+      `${(n ? lo.toFixed(2) : "-").padStart(11)} ${(n ? hi.toFixed(2) : "-").padStart(11)}`);
   }
-  // 後退区間(前モータ回転 < -5)の洗い出し。時刻合わせの検算に使う。
-  const runs = [];
-  let start = null;
-  for (let row = 0; row < grid.rows; row++) {
-    const v = grid.data[row * grid.colCount + COCKPIT_COLS.frontRpm];
-    const neg = Number.isFinite(v) && v < -5;
-    if (neg && start === null) start = row;
-    if (!neg && start !== null) {
-      if ((row - start) / grid.hz > 1) runs.push([start / grid.hz, row / grid.hz]);
-      start = null;
+  const runsOf = (col, pred) => {
+    const runs = [];
+    let start = null;
+    for (let row = 0; row < grid.rows; row++) {
+      const v = grid.data[row * grid.colCount + col];
+      const on = Number.isFinite(v) && pred(v);
+      if (on && start === null) start = row;
+      if (!on && start !== null) {
+        if ((row - start) / grid.hz > 1) runs.push(`${(start / grid.hz).toFixed(2)}〜${(row / grid.hz).toFixed(2)}s`);
+        start = null;
+      }
     }
-  }
-  rows.push("", `後退区間(前回転 < -5 rpm, 1秒超): ${runs.map(([a, b]) => `${a.toFixed(2)}〜${b.toFixed(2)}s`).join(", ") || "なし"}`);
-
-  // シフト R の区間
-  const rRuns = [];
-  start = null;
-  for (let row = 0; row < grid.rows; row++) {
-    const v = grid.data[row * grid.colCount + COCKPIT_COLS.shift];
-    const isR = v === 1;
-    if (isR && start === null) start = row;
-    if (!isR && start !== null) {
-      if ((row - start) / grid.hz > 1) rRuns.push([start / grid.hz, row / grid.hz]);
-      start = null;
-    }
-  }
-  rows.push(`シフト R の区間(1秒超): ${rRuns.map(([a, b]) => `${a.toFixed(2)}〜${b.toFixed(2)}s`).join(", ") || "なし"}`);
-  out(rows.join("\n"));
+    return runs.join(", ") || "なし";
+  };
+  lines.push("", `後退区間(前回転 < -5 rpm, 1秒超): ${runsOf(COCKPIT_COLS.frontRpm, (v) => v < -5)}`);
+  lines.push(`シフト R の区間(1秒超): ${runsOf(COCKPIT_COLS.shift, (v) => v === 1)}`);
+  out(lines.join("\n"));
 }
 
 $("load").addEventListener("click", () => { load().catch((e) => out(String(e.stack || e))); });
 $("go").addEventListener("click", () => seekTo(Number($("seek").value) || 0));
 $("stats").addEventListener("click", printStats);
-window.addEventListener("resize", () => panel.resize());
-loop();
 </script>
 </body>
 </html>
